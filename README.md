@@ -6,7 +6,7 @@ totals by category, region performance vs. the prior period, discount/margin ris
 underperformance flags, and a plain-language summary — plus a way to ask questions
 about the data in plain English.
 
-**Live report:** https://jonathanpatinopursuit.github.io/sales-organizer/
+**Live report:** https://jonathanpatinopursuit.github.io/sales/
 (publishing this is a manual step — see [Publishing the live report](#publishing-the-live-report) —
 so it only ever shows a report you've explicitly chosen to make public.)
 
@@ -91,7 +91,7 @@ explicitly:
 
 This copies `reports/latest.html` to `docs/index.html`, commits, and pushes —
 GitHub Pages serves whatever is in `docs/` at
-https://jonathanpatinopursuit.github.io/sales-organizer/. Only run this when
+https://jonathanpatinopursuit.github.io/sales/. Only run this when
 `reports/latest.html` contains data you're OK with being publicly visible.
 
 ## Asking questions
