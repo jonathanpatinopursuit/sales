@@ -46,7 +46,8 @@ COLOR_GOOD = "#0ca30c"
 # ---------------------------------------------------------------------------
 
 def write_excel(path, summary_text, current_period, prior_period,
-                 category_df, region_df, discount_product_df, discount_category_df, flags_df):
+                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                 warnings=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
 
@@ -63,6 +64,7 @@ def write_excel(path, summary_text, current_period, prior_period,
         good_fmt = workbook.add_format({"font_color": COLOR_GOOD_TEXT, "bold": True})
         bad_fmt = workbook.add_format({"font_color": COLOR_CRITICAL, "bold": True})
         wrap_fmt = workbook.add_format({"text_wrap": True, "valign": "top"})
+        warn_header_fmt = workbook.add_format({"bold": True, "font_color": COLOR_WARNING})
 
         # --- Summary sheet ---
         ws = workbook.add_worksheet("Summary")
@@ -72,6 +74,13 @@ def write_excel(path, summary_text, current_period, prior_period,
         ws.write("A2", f"Current period: {current_period}   |   Prior period: {prior_period}")
         ws.write("A4", summary_text, wrap_fmt)
         ws.set_row(3, 60)
+
+        next_row = 5
+        if warnings:
+            ws.write(next_row, 0, f"Data Quality — {len(warnings)} item(s)", warn_header_fmt)
+            warn_text = "\n".join(f"⚠ {w}" for w in warnings)
+            ws.write(next_row + 1, 0, warn_text, wrap_fmt)
+            ws.set_row(next_row + 1, 16 * len(warnings) + 10)
 
         def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=()):
             df = df.copy()
@@ -175,7 +184,16 @@ def _df_to_table(df, columns, headers, formatters):
 
 def write_html(path, summary_text, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags,
-                total_revenue, total_profit, overall_margin, revenue_change):
+                total_revenue, total_profit, overall_margin, revenue_change, warnings=()):
+
+    data_quality_html = ""
+    if warnings:
+        items = "".join(f"<li>{w}</li>" for w in warnings)
+        data_quality_html = f"""
+      <div class="dataquality">
+        <strong>⚠ Data Quality — {len(warnings)} item(s)</strong>
+        <ul>{items}</ul>
+      </div>"""
 
     stat_tiles = "".join([
         _stat_tile("Total Revenue", _fmt_money(total_revenue), revenue_change),
@@ -251,6 +269,12 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
   .meta {{ color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 24px; }}
   .summary {{ background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
               padding: 18px 20px; line-height: 1.55; margin-bottom: 28px; }}
+  .dataquality {{ background: var(--surface-1); border: 1px solid var(--border);
+                  border-left: 4px solid var(--status-warning); border-radius: 10px;
+                  padding: 14px 20px; margin-bottom: 28px; font-size: 0.9rem;
+                  color: var(--text-secondary); }}
+  .dataquality ul {{ margin: 8px 0 0; padding-left: 18px; }}
+  .dataquality li {{ margin: 2px 0; }}
   h2 {{ font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em;
         color: var(--text-secondary); margin: 36px 0 12px; }}
   .stat-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }}
@@ -292,6 +316,7 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
     &nbsp;|&nbsp; Generated {generated_at}</div>
 
   <div class="summary">{summary_text}</div>
+  {data_quality_html}
 
   <h2>Overview</h2>
   <div class="stat-grid">{stat_tiles}</div>
@@ -332,7 +357,7 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
 def main():
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    data = common.load_data()
+    data, warnings = common.load_data()
     current_df, prior_df, current_period, prior_period = common.split_periods(data)
 
     category_df = analysis.category_summary(current_df, prior_df)
@@ -358,12 +383,13 @@ def main():
     html_path = os.path.join(REPORTS_DIR, f"sales_report_{stamp}.html")
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
-                category_df, region_df, discount_product_df, discount_category_df, flags_df)
+                category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                warnings)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags,
-               total_revenue, total_profit, overall_margin, revenue_change)
+               total_revenue, total_profit, overall_margin, revenue_change, warnings)
 
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))
     shutil.copyfile(html_path, os.path.join(REPORTS_DIR, "latest.html"))
@@ -371,6 +397,10 @@ def main():
     print(f"Report generated for {current_period} (prior: {prior_period}).")
     print(f"  Excel: {xlsx_path}")
     print(f"  HTML:  {html_path}")
+    if warnings:
+        print(f"\nData quality warnings ({len(warnings)}):")
+        for w in warnings:
+            print(f"  - {w}")
     print(f"  Also updated: reports/latest.xlsx and reports/latest.html")
 
 

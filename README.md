@@ -44,6 +44,23 @@ any column order):
 Revenue is derived as `quantity * price * (1 - discount)`. You don't need to
 compute revenue yourself.
 
+## Data quality checks
+
+Every file is validated on intake (`scripts/validate_data.py`) before it's used:
+
+| Problem | What happens |
+|---|---|
+| A required column is missing | **Halts** — that file is rejected with a clear error naming the missing column(s) |
+| More than 5% of rows have an unparseable/blank date | **Halts** — usually means the wrong column or a format the parser doesn't recognize |
+| A few rows (≤5%) have an unparseable/blank date | Those rows are **skipped**, rest of the file is used |
+| A row has zero/negative quantity or a negative price | That row is **skipped** |
+| A discount is outside 0–100% | **Clamped** to the nearest valid bound |
+| Duplicate rows (within a file, or the same export saved under two filenames) | **Flagged only** — nothing is removed automatically, since legitimate repeat orders can look identical |
+
+Anything skipped or clamped shows up in a "Data Quality" banner at the top of
+the report (and printed to the console), so problems are visible instead of
+silently changing your numbers.
+
 ## Adding new data
 
 Every week, just drop your new export (`.xlsx`) into `data/`. You can keep old
@@ -106,6 +123,7 @@ sales/
 │   ├── common.py        loads & normalizes data/*.xlsx
 │   ├── analysis.py       category/region/discount/flag calculations (shared)
 │   ├── generate_report.py   builds the Excel + HTML report
+│   ├── validate_data.py     intake validation (bad dates, bad rows, discounts, dupes)
 │   └── create_sample_data.py  writes a synthetic two-month sample export
 ├── requirements.txt
 └── README.md
@@ -122,6 +140,3 @@ sales/
 3. **A live dashboard.** Swap the static HTML report for a small always-on
    dashboard (e.g. Streamlit or a simple web app) so you can filter by date
    range, region, or category interactively instead of regenerating files.
-4. **Data validation on intake.** Add a quick sanity check when a new export
-   lands in `data/` (missing columns, duplicate rows, obviously bad dates) so
-   bad data gets caught before it skews a report, instead of after.
