@@ -5,6 +5,21 @@ builds the sales summary a Sales Coordinator would otherwise put together by han
 totals by category, region performance vs. the prior period, discount/margin risk,
 underperformance flags, and a plain-language summary.
 
+## Quick start
+
+```bash
+python3 -m pip install -r requirements.txt   # first time only
+./run.sh
+```
+
+1. Drop your weekly `.xlsx` export into `data/`.
+2. Run `./run.sh`.
+3. Open **`reports/latest.html`** (or `reports/latest.xlsx` in Excel) — always
+   the newest report, same filename every time.
+
+If anything's wrong with your file, the terminal and the top of the report
+will say exactly what's wrong and how to fix it.
+
 **Live report:** https://jonathanpatinopursuit.github.io/sales/
 (publishing this is a manual step — see [Publishing the live report](#publishing-the-live-report) —
 so it only ever shows a report you've explicitly chosen to make public.)
@@ -97,29 +112,21 @@ to write a synthetic two-month `data/sample_sales.xlsx` (with a deliberately
 weaker prior month for one region) so you can try the report and see the
 period-over-period comparisons and flags in action.
 
-## Setup
+## Output files
 
-```bash
-python3 -m pip install -r requirements.txt
-```
+Every run of `./run.sh` writes both an Excel workbook and an HTML page to
+`reports/`:
 
-## How to run
+- **`reports/latest.xlsx`** / **`reports/latest.html`** — always overwritten
+  with the newest report. This is what you open every time; the name never
+  changes, so you never have to search for it.
+- `reports/sales_report_<period>.xlsx` / `.html` — a dated copy of the same
+  report (e.g. `sales_report_2026-07.html`), kept alongside `latest.*` in
+  case you want to look back at an older period.
 
-Generate the report (single command):
-
-```bash
-python3 scripts/generate_report.py
-```
-
-This reads every `.xlsx` file in `data/` and writes both an Excel workbook and
-an HTML page to `reports/`:
-
-- `reports/sales_report_<period>.xlsx` — multi-sheet workbook (Summary, By
-  Category, By Region, Discounts by Product, Discounts by Category, Flags)
-- `reports/sales_report_<period>.html` — single-file report you can open
-  directly in a browser
-- `reports/latest.xlsx` / `reports/latest.html` — always overwritten with the
-  newest report, so you can bookmark one link/file
+The Excel workbook has one sheet per section (Summary, By Category, By
+Region, Discounts by Product, Discounts by Category, Flags); the HTML report
+is a single self-contained file.
 
 ## Publishing the live report
 
@@ -141,6 +148,7 @@ https://jonathanpatinopursuit.github.io/sales/. Only run this when
 
 ```
 sales/
+├── run.sh              generates the report -- the only command you need
 ├── data/              your weekly Excel exports (gitignored, drop files here)
 ├── reports/            generated reports land here (gitignored, drop files here)
 ├── scripts/

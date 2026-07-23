@@ -53,9 +53,13 @@ def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[
         df.columns = [str(c).strip().lower() for c in df.columns]
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing:
+            col_word = "column" if len(missing) == 1 else "columns"
             halts.append(
-                f"{filename} is missing expected column(s): {', '.join(missing)}. "
-                f"Expected columns: {', '.join(REQUIRED_COLUMNS)}"
+                f"'{filename}' can't be used — it's missing the {col_word}: {', '.join(missing)}. "
+                f"Fix: open the file, add a header named exactly '{missing[0]}'"
+                + (f" (and: {', '.join(missing[1:])})" if len(missing) > 1 else "")
+                + f" with the right values in each row, then run the report again. "
+                f"All required columns: {', '.join(REQUIRED_COLUMNS)}."
             )
             continue
         df = df[REQUIRED_COLUMNS].copy()

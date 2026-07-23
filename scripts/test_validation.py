@@ -108,7 +108,7 @@ def test_discount_clamp():
            f"expected 'clamped:discount', got {result.loc[0, 'dq_flag']!r}")
     _check(pd.isna(result.loc[1, "dq_flag"]), "untouched rows stay untagged",
            f"row 1 unexpectedly tagged: {result.loc[1, 'dq_flag']!r}")
-    warn_issues = [i for i in issues if i["level"] == "warn" and "Clamped" in i["message"]]
+    warn_issues = [i for i in issues if i["level"] == "warn" and "Corrected" in i["message"]]
     _check(bool(warn_issues), f"warning recorded: {warn_issues}", "expected a clamp warning")
 
 

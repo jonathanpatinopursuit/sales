@@ -51,6 +51,17 @@ REQUIRED_COLUMNS = [
 
 DATE_HALT_THRESHOLD = 0.05  # halt the file if more than this fraction of dates are bad
 
+# Plain-language text for each dq_flag label, used when a report shows a row's
+# reason inline -- a first-time user should never need to look up what a label
+# like "clamped:discount" means.
+DQ_LABEL_TEXT = {
+    "flagged:invalid_region": "missing region",
+    "flagged:invalid_category": "missing category",
+    "clamped:discount": "discount was out of the valid 0-100% range and was corrected",
+    "flagged:negative_profit": "negative profit on this row",
+    "flagged:duplicate": "duplicate row",
+}
+
 
 def tag_dq_flag(df: pd.DataFrame, mask: pd.Series, label: str) -> None:
     """Tag df.loc[mask, 'dq_flag'] with `label`, in place. Appends (";"-joined)
@@ -85,12 +96,15 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
     pct = bad_dates.mean() if len(df) else 0.0
     if pct > DATE_HALT_THRESHOLD:
         raise ValueError(
-            f"{pct:.1%} of dates unparseable in {filename} — likely wrong column/format."
+            f"'{filename}' can't be used — {pct:.0%} of its rows don't have a valid date, "
+            f"so this file was skipped entirely. Fix: open the file and check the 'date' "
+            f"column — make sure it's named exactly 'date' and every row has a real date "
+            f"(e.g. 2026-07-15), then run the report again."
         )
     elif bad_dates.any():
         issues.append({
             "level": "skip",
-            "message": f"Skipped {bad_dates.sum()} row(s) with unparseable/blank dates in {filename} ({pct:.1%}).",
+            "message": f"Skipped {bad_dates.sum()} row(s) in {filename} — the 'date' column was blank or unreadable for those rows.",
             "count": int(bad_dates.sum()),
         })
         df = df[~bad_dates]
@@ -101,7 +115,7 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
     if bad_qty.any():
         issues.append({
             "level": "skip",
-            "message": f"Skipped {bad_qty.sum()} row(s) with non-positive quantity or negative price in {filename}.",
+            "message": f"Skipped {bad_qty.sum()} row(s) in {filename} — quantity was zero/negative or price was negative.",
             "count": int(bad_qty.sum()),
         })
         df = df[~bad_qty]
@@ -132,7 +146,7 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
     if bad_disc.any():
         issues.append({
             "level": "warn",
-            "message": f"Clamped {bad_disc.sum()} discount value(s) to [0, 1] in {filename}.",
+            "message": f"Corrected {bad_disc.sum()} discount value(s) in {filename} that were outside the valid 0-100% range.",
             "count": int(bad_disc.sum()),
         })
         df["discount"] = df["discount"].clip(0, 1)

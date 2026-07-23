@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from common import pct_change
+from validate_data import DQ_LABEL_TEXT
 
 DECLINE_FLAG_THRESHOLD = -15.0   # % revenue drop vs prior period
 LOW_MARGIN_THRESHOLD = 0.10      # margin below 10% is flagged
@@ -13,10 +14,12 @@ NEGATIVE_PROFIT_FLAG = True      # always flag any segment with negative total p
 
 
 def _dq_summary(flags: pd.Series):
-    """Human-readable summary of dq_flag values among one group's rows, or
+    """Plain-language summary of dq_flag values among one group's rows, or
     None if none of them are tagged. Only rows actually inside this group
     are considered, so a metric is only annotated when a row that literally
-    contributed to it was flagged -- never because something nearby was."""
+    contributed to it was flagged -- never because something nearby was.
+    Uses DQ_LABEL_TEXT so the reason is self-explanatory without needing to
+    know what an internal label like "clamped:discount" means."""
     flagged = flags.dropna()
     if flagged.empty:
         return None
@@ -24,8 +27,9 @@ def _dq_summary(flags: pd.Series):
     for val in flagged:
         for label in str(val).split(";"):
             counts[label] = counts.get(label, 0) + 1
-    parts = [f"{label} ({n})" for label, n in sorted(counts.items())]
-    return f"{len(flagged)} row(s): " + ", ".join(parts)
+    parts = [f"{DQ_LABEL_TEXT.get(label, label)} ({n})" for label, n in sorted(counts.items())]
+    row_word = "row" if len(flagged) == 1 else "rows"
+    return f"{len(flagged)} {row_word} affected: " + ", ".join(parts)
 
 
 def _attach_dq_notes(df: pd.DataFrame, source_df: pd.DataFrame, by: str) -> pd.DataFrame:

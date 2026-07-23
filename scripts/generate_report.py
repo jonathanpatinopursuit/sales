@@ -2,12 +2,13 @@
 """Generate the Sales Organizer report from every Excel file in data/.
 
 Usage:
-    python3 scripts/generate_report.py
+    ./run.sh
+    (equivalent to: python3 scripts/generate_report.py)
 
 Outputs (written to reports/):
-    sales_report_<current-period>.xlsx  - formatted workbook, one sheet per section
-    sales_report_<current-period>.html  - single-file HTML report (view in a browser)
-    latest.xlsx / latest.html           - always overwritten copies of the newest report
+    latest.xlsx / latest.html           - always overwritten; open these every time
+    sales_report_<current-period>.xlsx  - dated copy, one sheet per section
+    sales_report_<current-period>.html  - dated copy, single-file HTML report
 """
 
 from __future__ import annotations
@@ -72,18 +73,19 @@ def write_excel(path, summary_text, current_period, prior_period,
         halt_text_fmt = workbook.add_format({"text_wrap": True, "valign": "top", "bg_color": "#fee2e2"})
 
         # --- Summary sheet ---
+        # Data Quality banner comes first (row 2 onward) -- before the summary
+        # paragraph -- so a user sees whether the numbers below are trustworthy
+        # before reading them, not after.
         ws = workbook.add_worksheet("Summary")
         writer.sheets["Summary"] = ws
         ws.set_column("A:A", 100)
         ws.write("A1", "Sales Organizer Report", workbook.add_format({"bold": True, "font_size": 16}))
         ws.write("A2", f"Current period: {current_period}   |   Prior period: {prior_period}")
-        ws.write("A4", summary_text, wrap_fmt)
-        ws.set_row(3, 60)
 
         warn_issues = [i for i in issues if i["level"] == "warn"]
         skip_issues = [i for i in issues if i["level"] == "skip"]
 
-        next_row = 5
+        next_row = 2
         if halts:
             ws.write(next_row, 0, f"🚫 HALT — {len(halts)} file(s) rejected", halt_fmt)
             text = "\n".join(f"🚫 {h}" for h in halts)
@@ -103,6 +105,10 @@ def write_excel(path, summary_text, current_period, prior_period,
             ws.write(next_row + 1, 0, text, skip_text_fmt)
             ws.set_row(next_row + 1, 16 * len(skip_issues) + 10)
             next_row += 2
+
+        ws.write(next_row, 0, summary_text, wrap_fmt)
+        ws.set_row(next_row, 60)
+        next_row += 1
 
         def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=(), flag_col=None):
             df = df.copy()
@@ -397,8 +403,8 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
     &nbsp;|&nbsp; Prior period: <strong>{prior_period if prior_period is not None else 'n/a'}</strong>
     &nbsp;|&nbsp; Generated {generated_at}</div>
 
-  <div class="summary">{summary_text}</div>
   {data_quality_html}
+  <div class="summary">{summary_text}</div>
 
   <h2>Overview</h2>
   <div class="stat-grid">{stat_tiles}</div>
@@ -477,19 +483,26 @@ def main():
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))
     shutil.copyfile(html_path, os.path.join(REPORTS_DIR, "latest.html"))
 
-    print(f"Report generated for {current_period} (prior: {prior_period}).")
-    print(f"  Excel: {xlsx_path}")
-    print(f"  HTML:  {html_path}")
     if halts:
-        print(f"\nHALT — {len(halts)} file(s) rejected:")
+        print(f"🚫 {len(halts)} file(s) could not be used:")
         for h in halts:
-            print(f"  🚫 {h}")
+            print(f"   - {h}")
+        print()
+
+    if current_period is None:
+        print("⚠ No usable data was found — fix the file(s) above and run this again.")
+    else:
+        period_note = f" (prior period: {prior_period})" if prior_period is not None else " (no prior period yet)"
+        print(f"✅ Report generated for {current_period}{period_note}.")
+
+    print(f"\n📄 Open this: {os.path.join(REPORTS_DIR, 'latest.html')}  (or latest.xlsx in Excel)")
+    print(f"   Dated copy saved as: {os.path.basename(xlsx_path)}, {os.path.basename(html_path)}")
+
     if issues:
-        print(f"\nData quality issues ({len(issues)}):")
+        print(f"\n⚠ {len(issues)} data quality issue(s) found — see the banner at the top of the report:")
         for i in issues:
             icon = "⚠" if i["level"] == "warn" else "⬜"
-            print(f"  {icon} {i['message']}")
-    print(f"  Also updated: reports/latest.xlsx and reports/latest.html")
+            print(f"   {icon} {i['message']}")
 
 
 if __name__ == "__main__":
