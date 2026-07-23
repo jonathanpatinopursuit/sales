@@ -12,6 +12,34 @@ HIGH_DISCOUNT_THRESHOLD = 0.15   # average discount above 15% is "big"
 NEGATIVE_PROFIT_FLAG = True      # always flag any segment with negative total profit
 
 
+def _dq_summary(flags: pd.Series):
+    """Human-readable summary of dq_flag values among one group's rows, or
+    None if none of them are tagged. Only rows actually inside this group
+    are considered, so a metric is only annotated when a row that literally
+    contributed to it was flagged -- never because something nearby was."""
+    flagged = flags.dropna()
+    if flagged.empty:
+        return None
+    counts: dict[str, int] = {}
+    for val in flagged:
+        for label in str(val).split(";"):
+            counts[label] = counts.get(label, 0) + 1
+    parts = [f"{label} ({n})" for label, n in sorted(counts.items())]
+    return f"{len(flagged)} row(s): " + ", ".join(parts)
+
+
+def _attach_dq_notes(df: pd.DataFrame, source_df: pd.DataFrame, by: str) -> pd.DataFrame:
+    """Merge a per-group dq_note column onto df, computed from source_df's
+    dq_flag column grouped by `by`. source_df must be the exact rows that
+    were aggregated to produce df's numbers (e.g. current_df), so the note
+    is always period- and group-scoped correctly."""
+    if "dq_flag" not in source_df.columns or source_df.empty:
+        df["dq_note"] = None
+        return df
+    notes = source_df.groupby(by)["dq_flag"].apply(_dq_summary).reset_index(name="dq_note")
+    return df.merge(notes, on=by, how="left")
+
+
 def grouped_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame, by: str) -> pd.DataFrame:
     def agg(df):
         if df.empty:
@@ -33,6 +61,7 @@ def grouped_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame, by: str) -
         lambda r: pct_change(r["revenue"], r["prior_revenue"]) if pd.notna(r.get("prior_revenue")) else None,
         axis=1,
     )
+    merged = _attach_dq_notes(merged, current_df, by)
     return merged.sort_values("revenue", ascending=False).reset_index(drop=True)
 
 
@@ -50,7 +79,7 @@ def product_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> pd.Data
 
 def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_n: int = 10) -> pd.DataFrame:
     if current_df.empty:
-        return pd.DataFrame(columns=[group_col, "avg_discount", "revenue", "profit", "margin", "margin_risk"])
+        return pd.DataFrame(columns=[group_col, "avg_discount", "revenue", "profit", "margin", "margin_risk", "dq_note"])
     g = current_df.groupby(group_col).agg(
         avg_discount=("discount", "mean"),
         revenue=("revenue", "sum"),
@@ -58,6 +87,7 @@ def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_
     ).reset_index()
     g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
     g["margin_risk"] = (g["avg_discount"] >= HIGH_DISCOUNT_THRESHOLD) & (g["margin"] < LOW_MARGIN_THRESHOLD)
+    g = _attach_dq_notes(g, current_df, group_col)
     return g.sort_values("avg_discount", ascending=False).head(top_n).reset_index(drop=True)
 
 

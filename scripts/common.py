@@ -7,7 +7,7 @@ import os
 
 import pandas as pd
 
-from validate_data import REQUIRED_COLUMNS, validate
+from validate_data import REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
@@ -22,7 +22,7 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
     return sorted(files)
 
 
-EMPTY_COLUMNS = REQUIRED_COLUMNS + ["__source_file", "revenue", "margin", "period"]
+EMPTY_COLUMNS = REQUIRED_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
 
 
 def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[str]]:
@@ -63,6 +63,11 @@ def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         for col in ("quantity", "price", "discount", "profit"):
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        # fillna("") first so a genuinely missing cell becomes "" rather than the
+        # literal string "nan" that .astype(str) would otherwise produce -- needed
+        # for validate()'s blank-region/category checks to work correctly.
+        for col in ("customer", "product", "category", "region"):
+            df[col] = df[col].fillna("").astype(str).str.strip()
 
         # Revenue = quantity * price * (1 - discount), where discount is a 0..1 rate.
         # If discount looks like it's stored as a percentage (e.g. 10 instead of
@@ -87,12 +92,12 @@ def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[
 
     data = pd.concat(frames, ignore_index=True)
 
-    for col in ("customer", "product", "category", "region"):
-        data[col] = data[col].astype(str).str.strip()
-
     # validate() only catches duplicates within a single file; also check
     # across files, in case the same export got saved under two filenames.
+    # Compare only the business columns (not dq_flag), or two otherwise-identical
+    # rows tagged differently by earlier checks would wrongly look distinct.
     cross_file_dupe_mask = data.duplicated(subset=REQUIRED_COLUMNS, keep=False)
+    tag_dq_flag(data, cross_file_dupe_mask, "flagged:duplicate")
     cross_file_dupes = int(data.duplicated(subset=REQUIRED_COLUMNS).sum())
     if cross_file_dupes:
         issues.append({
@@ -102,7 +107,6 @@ def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[
                 f"— check for the same export saved under more than one filename."
             ),
             "count": cross_file_dupes,
-            "rows": data.loc[cross_file_dupe_mask, ["date", "product", "category", "region"]].to_dict("records"),
         })
 
     data["revenue"] = data["quantity"] * data["price"] * (1 - data["discount"])

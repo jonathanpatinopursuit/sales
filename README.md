@@ -48,29 +48,42 @@ compute revenue yourself.
 
 Every file is validated on intake (`scripts/validate_data.py`) before it's used:
 
-| Problem | What happens |
-|---|---|
-| A required column is missing | **Halts** — that file is rejected with a clear error naming the missing column(s); other files in `data/` still process normally |
-| More than 5% of rows have an unparseable/blank date | **Halts** — usually means the wrong column or a format the parser doesn't recognize; other files still process normally |
-| A few rows (≤5%) have an unparseable/blank date | Those rows are **skipped**, rest of the file is used |
-| A row has zero/negative quantity or a negative price | That row is **skipped** |
-| A discount is outside 0–100% | **Clamped** to the nearest valid bound |
-| Duplicate rows (within a file, or the same export saved under two filenames) | **Flagged only** — nothing is removed automatically, since legitimate repeat orders can look identical |
+| Problem | dq_flag label | What happens |
+|---|---|---|
+| A required column is missing | — | **Halts** — that file is rejected with a clear error naming the missing column(s); other files in `data/` still process normally |
+| More than 5% of rows have an unparseable/blank date | — | **Halts** — usually means the wrong column or a format the parser doesn't recognize; other files still process normally |
+| A few rows (≤5%) have an unparseable/blank date | `skipped:bad_date` | Those rows are **skipped**, rest of the file is used |
+| A row has zero/negative quantity or a negative price | `skipped:invalid_qty_price` | That row is **skipped** |
+| A row has a blank/missing region | `flagged:invalid_region` | **Kept** (dropping it would lose real revenue), just flagged |
+| A row has a blank/missing category | `flagged:invalid_category` | **Kept**, just flagged |
+| A discount is outside 0–100% | `clamped:discount` | **Clamped** to the nearest valid bound, row kept |
+| A row has negative profit | `flagged:negative_profit` | **Kept** — not necessarily wrong (could be a real loss), but worth surfacing |
+| Duplicate rows (within a file, or the same export saved under two filenames) | `flagged:duplicate` | **Kept** — nothing is removed automatically, since legitimate repeat orders can look identical |
 
-A halted file doesn't stop the run — it's excluded and the report still
-generates from whatever files are valid (or, if every file halted, a report
-still generates with $0 across the board and the banner explaining why).
+Every row gets tagged with its own `dq_flag` (skipped rows are tagged before
+being dropped, purely so the check that dropped them can be tested in
+isolation — a dropped row never reaches any metric). A row hit by more than
+one check keeps every label. A halted file doesn't stop the run — it's
+excluded and the report still generates from whatever files are valid (or,
+if every file halted, a report still generates with $0 across the board and
+the banner explaining why).
+
 Anything halted, skipped, or clamped shows up in a tiered "Data Quality"
 banner at the top of the report (🚫 halt / ⚠ warning / ⬜ skipped, printed to
-the console too), and rows whose discount was clamped or are duplicates get
-an inline "⚠ data adjusted" flag next to the specific product, category, or
-region whose *current-period* total actually includes one of those rows —
-never a flag on something merely nearby. A category is only flagged if at
-least one of its own rows had an issue; if a product had an issue only in a
-prior period's data, its current-period total stays unflagged, since that
-number was never computed from the affected row. So problems are visible
-instead of
-silently changing your numbers.
+the console too). Separately, every category/region/product total in the
+report carries its own inline flag computed from the *exact rows that went
+into that number* (see `analysis.py`'s `dq_note`, built from `dq_flag`
+grouped the same way as the metric itself) — so a flag always means "this
+number was computed using at least one tagged row," never "something nearby
+had an issue." A product with an issue only in the *prior* period leaves its
+*current*-period total unflagged, since that number was never computed from
+the affected row — and a category is flagged only when the group actually
+contains a tagged row, even if a different product in that same category is
+perfectly clean.
+
+Run `python3 scripts/test_validation.py` to exercise every check in
+isolation (halts, skips, clamps, flags, and a row hit by two checks at
+once) — it prints a ✅/❌ per assertion and exits non-zero on failure.
 
 ## Adding new data
 
@@ -135,6 +148,7 @@ sales/
 │   ├── analysis.py       category/region/discount/flag calculations (shared)
 │   ├── generate_report.py   builds the Excel + HTML report
 │   ├── validate_data.py     intake validation (bad dates, bad rows, discounts, dupes)
+│   ├── test_validation.py   test suite for validate_data.py
 │   └── create_sample_data.py  writes a synthetic two-month sample export
 ├── requirements.txt
 └── README.md

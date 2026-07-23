@@ -47,8 +47,7 @@ COLOR_GOOD = "#0ca30c"
 
 def write_excel(path, summary_text, current_period, prior_period,
                  category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                 issues=(), halts=(), adjusted_products=frozenset(), adjusted_categories=frozenset(),
-                 adjusted_regions=frozenset()):
+                 issues=(), halts=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
 
@@ -105,8 +104,11 @@ def write_excel(path, summary_text, current_period, prior_period,
             ws.set_row(next_row + 1, 16 * len(skip_issues) + 10)
             next_row += 2
 
-        def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=(), flag_col=None, flag_names=frozenset()):
+        def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=(), flag_col=None):
             df = df.copy()
+            # dq_note is an internal annotation, not a data column -- pull it out
+            # before writing, keep it aligned by position for the inline-flag pass below.
+            dq_notes = df.pop("dq_note").reset_index(drop=True) if "dq_note" in df.columns else None
             df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
             ws = writer.sheets[sheet_name]
             for col_num, col_name in enumerate(df.columns):
@@ -129,25 +131,29 @@ def write_excel(path, summary_text, current_period, prior_period,
                                        {"type": "cell", "criteria": "<", "value": 0, "format": bad_fmt})
                 ws.conditional_format(f"{col_letter}{first_row}:{col_letter}{last_row}",
                                        {"type": "cell", "criteria": ">=", "value": 0, "format": good_fmt})
-            # inline flag: mark rows whose name appears in flag_names as data-adjusted
-            if flag_col and flag_col in df.columns and flag_names:
+            # inline flag: a row is only flagged if ITS OWN dq_note says a row that
+            # actually contributed to that total was tagged -- not because of anything
+            # else nearby (dq_note is computed per-group in analysis.py from the exact
+            # rows behind that number).
+            if flag_col and flag_col in df.columns and dq_notes is not None:
                 col_idx = list(df.columns).index(flag_col)
                 flag_cell_fmt = workbook.add_format({"font_color": COLOR_WARNING, "italic": True})
-                for row_idx, val in enumerate(df[flag_col]):
-                    if val in flag_names:
-                        ws.write(2 + row_idx, col_idx, f"{val}  ⚠ data adjusted", flag_cell_fmt)
+                for row_idx, note in enumerate(dq_notes):
+                    if pd.notna(note):
+                        val = df.iloc[row_idx][flag_col]
+                        ws.write(2 + row_idx, col_idx, f"{val}  ⚠ {note}", flag_cell_fmt)
             return ws
 
         write_table(category_df, "By Category", pct_cols=["pct_change"],
                     money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
-                    flag_col="category", flag_names=adjusted_categories)
+                    flag_col="category")
         write_table(region_df, "By Region", pct_cols=["pct_change"],
                     money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
-                    flag_col="region", flag_names=adjusted_regions)
+                    flag_col="region")
         write_table(discount_product_df, "Discounts by Product", money_cols=["revenue", "profit"],
-                    plain_pct_cols=["avg_discount", "margin"], flag_col="product", flag_names=adjusted_products)
+                    plain_pct_cols=["avg_discount", "margin"], flag_col="product")
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
-                    plain_pct_cols=["avg_discount", "margin"], flag_col="category", flag_names=adjusted_categories)
+                    plain_pct_cols=["avg_discount", "margin"], flag_col="category")
         write_table(flags_df, "Flags")
 
 
@@ -173,13 +179,13 @@ def _delta_span(v):
     return f'<span class="{cls}">{arrow} {abs(v):.1f}%</span>'
 
 
-def _name_with_flag(value, adjusted_names):
-    """Render a dimension name (product/category/region), with an inline
-    "data adjusted" flag only if THIS specific name's total actually includes
-    an affected row -- membership in adjusted_names is already period-scoped
-    by the caller, so this never flags something just because it's nearby."""
-    if value in adjusted_names:
-        return f'{value} <span class="dq-flag" title="Data adjusted for this row">⚠️ <em>data adjusted</em></span>'
+def _name_with_note(value, dq_note):
+    """Render a dimension name (product/category/region), with an inline flag
+    only if dq_note is set -- dq_note is computed per-group in analysis.py from
+    the exact rows behind that group's numbers, so this never flags a name just
+    because something unrelated nearby had an issue."""
+    if pd.notna(dq_note):
+        return f'{value} <span class="dq-flag" title="{dq_note}">⚠️ <em>data adjusted</em></span>'
     return str(value)
 
 
@@ -215,12 +221,17 @@ def _flag_card(flag):
       </div>"""
 
 
-def _df_to_table(df, columns, headers, formatters):
+def _df_to_table(df, columns, headers, formatters, name_col=None, note_col=None):
     thead = "".join(f"<th>{h}</th>" for h in headers)
     rows_html = []
     for _, row in df.iterrows():
-        cells = "".join(f"<td>{formatters.get(c, str)(row[c])}</td>" for c in columns)
-        rows_html.append(f"<tr>{cells}</tr>")
+        cells = []
+        for c in columns:
+            val = formatters.get(c, str)(row[c])
+            if name_col and c == name_col and note_col:
+                val = _name_with_note(row[c], row.get(note_col))
+            cells.append(f"<td>{val}</td>")
+        rows_html.append(f"<tr>{''.join(cells)}</tr>")
     return f"<table><thead><tr>{thead}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
 
 
@@ -249,8 +260,7 @@ def render_dq_banner(issues=(), halts=()):
 def write_html(path, summary_text, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags,
                 total_revenue, total_profit, overall_margin, revenue_change,
-                issues=(), halts=(), adjusted_products=frozenset(), adjusted_categories=frozenset(),
-                adjusted_regions=frozenset()):
+                issues=(), halts=()):
 
     data_quality_html = render_dq_banner(issues, halts)
 
@@ -271,25 +281,25 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
         region_df, ["region", "revenue", "prior_revenue", "pct_change", "margin"],
         ["Region", "Revenue", "Prior Revenue", "Change", "Margin"],
         {
-            "region": lambda v: _name_with_flag(v, adjusted_regions),
             "revenue": _fmt_money, "prior_revenue": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
             "pct_change": _delta_span, "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
         },
+        name_col="region", note_col="dq_note",
     )
 
-    def discount_table(df, adjusted_names=frozenset()):
+    def discount_table(df):
         name_col = "product" if "product" in df.columns else "category"
 
         return _df_to_table(
             df, [name_col, "avg_discount", "revenue", "margin", "margin_risk"],
             ["Name", "Avg Discount", "Revenue", "Margin", "Risk"],
             {
-                name_col: lambda v: _name_with_flag(v, adjusted_names),
                 "avg_discount": lambda v: f"{v*100:.1f}%",
                 "revenue": _fmt_money,
                 "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
                 "margin_risk": lambda v: '<span class="risk-badge">⚠ margin risk</span>' if v else "—",
             },
+            name_col=name_col, note_col="dq_note",
         )
 
     flags_html = "".join(_flag_card(f) for f in flags) if flags else '<p class="muted">No flags raised this period.</p>'
@@ -408,10 +418,10 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
   {region_table}
 
   <h2>Biggest Discounts by Product</h2>
-  {discount_table(discount_product_df, adjusted_products)}
+  {discount_table(discount_product_df)}
 
   <h2>Biggest Discounts by Category</h2>
-  {discount_table(discount_category_df, adjusted_categories)}
+  {discount_table(discount_category_df)}
 
   <h2>Flags</h2>
   {flags_html}
@@ -431,26 +441,6 @@ def main():
 
     data, issues, halts = common.load_data()
     current_df, prior_df, current_period, prior_period = common.split_periods(data)
-
-    def _affected_names(field, period):
-        """Names for `field` (product/category/region) whose CURRENT-PERIOD total
-        actually includes at least one affected row -- not just anything nearby.
-        A single file can hold rows from multiple periods, so this must check each
-        affected row's own date, not just union every issue's rows together."""
-        names = set()
-        if period is None:
-            return names
-        for issue in issues:
-            if issue["level"] != "warn":
-                continue
-            for row in issue.get("rows", []):
-                if pd.Timestamp(row["date"]).to_period("M") == period:
-                    names.add(row[field])
-        return names
-
-    adjusted_products = _affected_names("product", current_period)
-    adjusted_categories = _affected_names("category", current_period)
-    adjusted_regions = _affected_names("region", current_period)
 
     category_df = analysis.category_summary(current_df, prior_df)
     region_df = analysis.region_summary(current_df, prior_df)
@@ -476,13 +466,13 @@ def main():
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                issues, halts, adjusted_products, adjusted_categories, adjusted_regions)
+                issues, halts)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags,
                total_revenue, total_profit, overall_margin, revenue_change,
-               issues, halts, adjusted_products, adjusted_categories, adjusted_regions)
+               issues, halts)
 
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))
     shutil.copyfile(html_path, os.path.join(REPORTS_DIR, "latest.html"))
