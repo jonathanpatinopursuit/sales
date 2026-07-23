@@ -76,11 +76,12 @@ UPLOAD_PAGE_CSS = """
     background: #1c1c1a; color: #fbfbf7; border: none; cursor: pointer;
   }
   .receipt button.total:hover { background: #3a3a36; }
-  .receipt .sample-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.98rem; margin-top: 16px; }
-  .receipt button.sample-link {
-    font-family: inherit; font-size: 0.98rem; background: none; border: none;
-    color: #a23c3c; text-decoration: underline; cursor: pointer; padding: 0;
+  .receipt button.total-secondary {
+    display: block; width: 100%; margin-top: 18px; padding: 18px;
+    font-family: inherit; font-weight: 700; font-size: 1.15rem; letter-spacing: 0.06em;
+    background: #a23c3c; color: #fbfbf7; border: none; cursor: pointer;
   }
+  .receipt button.total-secondary:hover { background: #872f2f; }
   .receipt .barcode {
     height: 48px; margin-top: 36px;
     background: repeating-linear-gradient(
@@ -119,11 +120,8 @@ def render_upload_page(error: str | None = None) -> str:
     <button class="total" type="submit">GENERATE REPORT</button>
   </form>
   <hr class="divider">
-  <form method="POST" action="/sample" style="display:contents;">
-    <div class="sample-row">
-      <span>NO DATA ON HAND?</span>
-      <button class="sample-link" type="submit">generate a sample report</button>
-    </div>
+  <form method="POST" action="/sample">
+    <button class="total-secondary" type="submit">NO DATA? GENERATE SAMPLE REPORT</button>
   </form>
   <div class="barcode"></div>
   <p class="footer-note">KEEP THIS REPORT FOR YOUR RECORDS</p>
