@@ -1,0 +1,8 @@
+{
+  "buildCommand": "pip3 install -r requirements.txt && python3 scripts/create_sample_data.py",
+  "functions": {
+    "api/app.py": {
+      "includeFiles": "{data/**,scripts/**}"
+    }
+  }
+}
