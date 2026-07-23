@@ -135,3 +135,20 @@ def build_summary_paragraph(current_df, prior_df, current_period, prior_period,
         parts.append("No critical issues were flagged this period.")
 
     return " ".join(parts)
+
+
+def analyze_sales(df: pd.DataFrame):
+    """Flat (no current/prior split) sales analysis: totals by region, category,
+    and product, discount impact on profit margin, and underperforming regions
+    (revenue below 20% of the average region's revenue)."""
+    by_region = df.groupby("region")["revenue"].sum().reset_index()
+    by_category = df.groupby("category")["revenue"].sum().reset_index()
+    by_product = df.groupby("product")["revenue"].sum().reset_index()
+
+    discount_impact = df.groupby("product")[["revenue", "discount", "profit"]].sum().reset_index()
+    discount_impact["profit_margin"] = (discount_impact["profit"] / discount_impact["revenue"] * 100).round(2)
+
+    avg = by_region["revenue"].mean()
+    flagged = by_region[by_region["revenue"] < avg * 0.2]
+
+    return by_region, by_category, by_product, discount_impact, flagged
