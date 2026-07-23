@@ -3,8 +3,7 @@
 Sales Organizer ingests your weekly sales order exports (Excel) and automatically
 builds the sales summary a Sales Coordinator would otherwise put together by hand:
 totals by category, region performance vs. the prior period, discount/margin risk,
-underperformance flags, and a plain-language summary — plus a way to ask questions
-about the data in plain English.
+underperformance flags, and a plain-language summary.
 
 **Live report:** https://jonathanpatinopursuit.github.io/sales/
 (publishing this is a manual step — see [Publishing the live report](#publishing-the-live-report) —
@@ -20,8 +19,6 @@ Point it at one or more weekly Excel exports and it will:
   that discounting is hurting profit margin
 - Automatically flag underperforming products, categories, or regions
 - Write a short, auto-generated plain-language summary at the top of the report
-- Let you ask questions like *"why is the West region down this month?"* and get
-  an answer pulled straight from the data
 
 "Current period" and "prior period" are the two most recent calendar months
 found in your data (based on the `date` column) — so as you drop in new weekly
@@ -94,24 +91,6 @@ GitHub Pages serves whatever is in `docs/` at
 https://jonathanpatinopursuit.github.io/sales/. Only run this when
 `reports/latest.html` contains data you're OK with being publicly visible.
 
-## Asking questions
-
-```bash
-python3 scripts/ask.py "why is the West region down this month?"
-python3 scripts/ask.py "how is the Electronics category doing?"
-python3 scripts/ask.py "what's going on with Widget Pro?"
-```
-
-This looks for a region, category, or product name from your own data inside
-the question, then pulls current-vs-prior-period numbers for that segment —
-revenue change, margin change, the specific sub-segments (products/categories/
-regions) driving the change, and any heavy-discount/margin-risk products.
-It's rule-based and runs entirely on your local data — no API key required.
-
-If it can't match anything specific in your question, it falls back to the
-same general summary that leads the report, plus a list of known region/
-category/product names you can ask about.
-
 ## Project structure
 
 ```
@@ -121,8 +100,7 @@ sales/
 ├── scripts/
 │   ├── common.py        loads & normalizes data/*.xlsx
 │   ├── analysis.py       category/region/discount/flag calculations (shared)
-│   ├── generate_report.py   builds the Excel + HTML report
-│   └── ask.py             the plain-language Q&A tool
+│   └── generate_report.py   builds the Excel + HTML report
 ├── requirements.txt
 └── README.md
 ```
@@ -138,10 +116,6 @@ sales/
 3. **A live dashboard.** Swap the static HTML report for a small always-on
    dashboard (e.g. Streamlit or a simple web app) so you can filter by date
    range, region, or category interactively instead of regenerating files.
-4. **Smarter Q&A.** Wire `ask.py` up to an LLM (e.g. the Claude API) so it can
-   answer free-form questions beyond named regions/categories/products —
-   trends, forecasts, "what changed the most this week," etc. — while still
-   grounding answers in the same underlying data.
-5. **Data validation on intake.** Add a quick sanity check when a new export
+4. **Data validation on intake.** Add a quick sanity check when a new export
    lands in `data/` (missing columns, duplicate rows, obviously bad dates) so
    bad data gets caught before it skews a report, instead of after.

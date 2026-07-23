@@ -1,4 +1,4 @@
-"""Core analysis functions shared by the report generator and the Q&A tool."""
+"""Core analysis functions used by the report generator."""
 
 from __future__ import annotations
 
