@@ -47,7 +47,8 @@ COLOR_GOOD = "#0ca30c"
 
 def write_excel(path, summary_text, current_period, prior_period,
                  category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                 issues=(), halts=(), adjusted_products=frozenset(), adjusted_categories=frozenset()):
+                 issues=(), halts=(), adjusted_products=frozenset(), adjusted_categories=frozenset(),
+                 adjusted_regions=frozenset()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
 
@@ -141,7 +142,8 @@ def write_excel(path, summary_text, current_period, prior_period,
                     money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
                     flag_col="category", flag_names=adjusted_categories)
         write_table(region_df, "By Region", pct_cols=["pct_change"],
-                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"])
+                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
+                    flag_col="region", flag_names=adjusted_regions)
         write_table(discount_product_df, "Discounts by Product", money_cols=["revenue", "profit"],
                     plain_pct_cols=["avg_discount", "margin"], flag_col="product", flag_names=adjusted_products)
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
@@ -169,6 +171,16 @@ def _delta_span(v):
     cls = "delta-up" if v >= 0 else "delta-down"
     arrow = "▲" if v >= 0 else "▼"
     return f'<span class="{cls}">{arrow} {abs(v):.1f}%</span>'
+
+
+def _name_with_flag(value, adjusted_names):
+    """Render a dimension name (product/category/region), with an inline
+    "data adjusted" flag only if THIS specific name's total actually includes
+    an affected row -- membership in adjusted_names is already period-scoped
+    by the caller, so this never flags something just because it's nearby."""
+    if value in adjusted_names:
+        return f'{value} <span class="dq-flag" title="Data adjusted for this row">⚠️ <em>data adjusted</em></span>'
+    return str(value)
 
 
 def _bar_row(label, value, max_value):
@@ -237,7 +249,8 @@ def render_dq_banner(issues=(), halts=()):
 def write_html(path, summary_text, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags,
                 total_revenue, total_profit, overall_margin, revenue_change,
-                issues=(), halts=(), adjusted_products=frozenset(), adjusted_categories=frozenset()):
+                issues=(), halts=(), adjusted_products=frozenset(), adjusted_categories=frozenset(),
+                adjusted_regions=frozenset()):
 
     data_quality_html = render_dq_banner(issues, halts)
 
@@ -258,6 +271,7 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
         region_df, ["region", "revenue", "prior_revenue", "pct_change", "margin"],
         ["Region", "Revenue", "Prior Revenue", "Change", "Margin"],
         {
+            "region": lambda v: _name_with_flag(v, adjusted_regions),
             "revenue": _fmt_money, "prior_revenue": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
             "pct_change": _delta_span, "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
         },
@@ -266,16 +280,11 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
     def discount_table(df, adjusted_names=frozenset()):
         name_col = "product" if "product" in df.columns else "category"
 
-        def name_fmt(v):
-            if v in adjusted_names:
-                return f'{v} <span class="dq-flag" title="Data adjusted for this row">⚠️ <em>data adjusted</em></span>'
-            return str(v)
-
         return _df_to_table(
             df, [name_col, "avg_discount", "revenue", "margin", "margin_risk"],
             ["Name", "Avg Discount", "Revenue", "Margin", "Risk"],
             {
-                name_col: name_fmt,
+                name_col: lambda v: _name_with_flag(v, adjusted_names),
                 "avg_discount": lambda v: f"{v*100:.1f}%",
                 "revenue": _fmt_money,
                 "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
@@ -423,12 +432,25 @@ def main():
     data, issues, halts = common.load_data()
     current_df, prior_df, current_period, prior_period = common.split_periods(data)
 
-    adjusted_products = set()
-    adjusted_categories = set()
-    for i in issues:
-        if i["level"] == "warn":
-            adjusted_products.update(i.get("products", []))
-            adjusted_categories.update(i.get("categories", []))
+    def _affected_names(field, period):
+        """Names for `field` (product/category/region) whose CURRENT-PERIOD total
+        actually includes at least one affected row -- not just anything nearby.
+        A single file can hold rows from multiple periods, so this must check each
+        affected row's own date, not just union every issue's rows together."""
+        names = set()
+        if period is None:
+            return names
+        for issue in issues:
+            if issue["level"] != "warn":
+                continue
+            for row in issue.get("rows", []):
+                if pd.Timestamp(row["date"]).to_period("M") == period:
+                    names.add(row[field])
+        return names
+
+    adjusted_products = _affected_names("product", current_period)
+    adjusted_categories = _affected_names("category", current_period)
+    adjusted_regions = _affected_names("region", current_period)
 
     category_df = analysis.category_summary(current_df, prior_df)
     region_df = analysis.region_summary(current_df, prior_df)
@@ -454,13 +476,13 @@ def main():
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                issues, halts, adjusted_products, adjusted_categories)
+                issues, halts, adjusted_products, adjusted_categories, adjusted_regions)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags,
                total_revenue, total_profit, overall_margin, revenue_change,
-               issues, halts, adjusted_products, adjusted_categories)
+               issues, halts, adjusted_products, adjusted_categories, adjusted_regions)
 
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))
     shutil.copyfile(html_path, os.path.join(REPORTS_DIR, "latest.html"))

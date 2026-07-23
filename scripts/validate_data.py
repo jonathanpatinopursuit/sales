@@ -12,9 +12,13 @@ still shows up as a HALT banner in the generated report.
 
 Non-halting problems are returned as a list of issue dicts:
     {"level": "skip" | "warn", "message": str, "count": int,
-     "products": [...], "categories": [...]}
-"products"/"categories" name which rows were affected (when applicable), so
-the report can flag those specific rows inline, not just show a raw count.
+     "rows": [{"date", "product", "category", "region"}, ...]}
+"rows" (only present for "warn"-level issues, which keep the row rather than
+dropping it) is the exact set of affected rows, including their date — the
+report uses this to flag only the specific product/category/region *and
+period* whose computed total actually includes one of these rows, not
+everything nearby. "skip"-level issues have no "rows": a skipped row is
+excluded from every total, so nothing it belonged to needs an inline flag.
 """
 
 from __future__ import annotations
@@ -76,8 +80,7 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
             "level": "warn",
             "message": f"Clamped {bad_disc.sum()} discount value(s) to [0, 1] in {filename}.",
             "count": int(bad_disc.sum()),
-            "products": sorted(set(df.loc[bad_disc, "product"])),
-            "categories": sorted(set(df.loc[bad_disc, "category"])),
+            "rows": df.loc[bad_disc, ["date", "product", "category", "region"]].to_dict("records"),
         })
         df = df.copy()
         df["discount"] = df["discount"].clip(0, 1)
@@ -90,8 +93,7 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
             "level": "warn",
             "message": f"Found {dupes} duplicate row(s) within {filename} — not removed.",
             "count": dupes,
-            "products": sorted(set(df.loc[dupe_mask, "product"])),
-            "categories": sorted(set(df.loc[dupe_mask, "category"])),
+            "rows": df.loc[dupe_mask, ["date", "product", "category", "region"]].to_dict("records"),
         })
 
     return df, issues

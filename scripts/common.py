@@ -102,8 +102,7 @@ def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[
                 f"— check for the same export saved under more than one filename."
             ),
             "count": cross_file_dupes,
-            "products": sorted(set(data.loc[cross_file_dupe_mask, "product"])),
-            "categories": sorted(set(data.loc[cross_file_dupe_mask, "category"])),
+            "rows": data.loc[cross_file_dupe_mask, ["date", "product", "category", "region"]].to_dict("records"),
         })
 
     data["revenue"] = data["quantity"] * data["price"] * (1 - data["discount"])

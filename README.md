@@ -63,8 +63,12 @@ still generates with $0 across the board and the banner explaining why).
 Anything halted, skipped, or clamped shows up in a tiered "Data Quality"
 banner at the top of the report (🚫 halt / ⚠ warning / ⬜ skipped, printed to
 the console too), and rows whose discount was clamped or are duplicates get
-an inline "⚠ data adjusted" flag next to that specific product/category in
-the Discounts tables — not just an aggregate count — so problems are visible
+an inline "⚠ data adjusted" flag next to the specific product, category, or
+region whose *current-period* total actually includes one of those rows —
+never a flag on something merely nearby. A category is only flagged if at
+least one of its own rows had an issue; if a product had an issue only in a
+prior period's data, its current-period total stays unflagged, since that
+number was never computed from the affected row. So problems are visible
 instead of
 silently changing your numbers.
 
