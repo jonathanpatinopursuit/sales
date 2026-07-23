@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/app.py": {
+      "includeFiles": "{scripts/**}"
+    }
+  }
+}

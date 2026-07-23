@@ -65,13 +65,20 @@ def _rows_for_month(items, date):
     return rows
 
 
-def create_sample_data():
+def sample_dataframe() -> pd.DataFrame:
+    """Build the synthetic two-period dataset in memory, in the same raw
+    column shape a real weekly export would have -- callers run it through
+    the normal common.process_file()/finalize_data() pipeline just like a
+    real upload, rather than this module special-casing its own report path."""
     rows = _rows_for_month(PRIOR_MONTH, datetime(2026, 6, 15)) + \
         _rows_for_month(CURRENT_MONTH, datetime(2026, 7, 15))
+    return pd.DataFrame(rows)
 
+
+def create_sample_data():
     os.makedirs(DATA_DIR, exist_ok=True)
     path = os.path.join(DATA_DIR, "sample_sales.xlsx")
-    pd.DataFrame(rows).to_excel(path, index=False)
+    sample_dataframe().to_excel(path, index=False)
     print(f"{path} created!")
 
 
