@@ -51,6 +51,11 @@ exports there too — multiple files are combined automatically, and duplicate
 weeks simply add up. Nothing in `data/` is tracked by git (see `.gitignore`),
 so this is safe to do without worrying about committing spreadsheets.
 
+Don't have a real export handy yet? Run `python3 scripts/create_sample_data.py`
+to write a synthetic two-month `data/sample_sales.xlsx` (with a deliberately
+weaker prior month for one region) so you can try the report and see the
+period-over-period comparisons and flags in action.
+
 ## Setup
 
 ```bash
@@ -100,7 +105,8 @@ sales/
 ├── scripts/
 │   ├── common.py        loads & normalizes data/*.xlsx
 │   ├── analysis.py       category/region/discount/flag calculations (shared)
-│   └── generate_report.py   builds the Excel + HTML report
+│   ├── generate_report.py   builds the Excel + HTML report
+│   └── create_sample_data.py  writes a synthetic two-month sample export
 ├── requirements.txt
 └── README.md
 ```
