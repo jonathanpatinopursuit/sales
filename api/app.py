@@ -10,6 +10,7 @@ generate_report.render_html() already returns.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 from datetime import datetime
@@ -20,6 +21,7 @@ from flask import Flask, request
 
 import analysis
 import common
+import create_sample_data
 import generate_report
 
 app = Flask(__name__)
@@ -68,9 +70,12 @@ UPLOAD_PAGE_CSS = """
   button.primary { width: 100%; padding: 14px; font-size: 1rem; font-weight: 600; border: none;
                     border-radius: 8px; background: var(--series-1); color: #fff; cursor: pointer; }
   button.primary:hover { opacity: 0.92; }
+  button.secondary { width: 100%; padding: 12px; font-size: 0.95rem; font-weight: 600;
+                      border: 1px solid var(--border); border-radius: 8px; background: transparent;
+                      color: var(--text-primary); cursor: pointer; }
+  button.secondary:hover { background: var(--surface-1); }
+  .or-divider { text-align: center; margin: 18px 0 10px; font-size: 0.85rem; color: var(--text-muted); }
   .error { color: var(--status-critical); margin-bottom: 14px; font-size: 0.92rem; }
-  .sample-link { display: block; text-align: center; margin-top: 16px; font-size: 0.88rem;
-                  color: var(--text-secondary); }
 """
 
 
@@ -94,7 +99,10 @@ def render_upload_page(error: str | None = None) -> str:
       <button type="submit" class="primary">Generate Report</button>
     </form>
   </div>
-  <a class="sample-link" href="/sample">or view a sample report</a>
+  <div class="or-divider">or, if you don't have data yet</div>
+  <form method="POST" action="/sample">
+    <button type="submit" class="secondary">Generate Sample Data &amp; Report</button>
+  </form>
 </div></div>
 </body>
 </html>"""
@@ -142,19 +150,12 @@ def _build_report_from_data(data, issues, halts) -> str:
     return html
 
 
-@app.route("/")
-def index():
-    return render_upload_page()
-
-
-@app.route("/generate", methods=["POST"])
-def generate():
-    file = request.files.get("file")
-    if file is None or file.filename == "":
-        return render_upload_page(error="Choose a .xlsx file first.")
-
+def _generate_report_from_file(file_like, filename: str) -> str:
+    """Shared by /generate (a real upload) and /sample (synthetic data) so
+    both run through the exact same read/validate/analyze pipeline -- the
+    only difference is where the raw .xlsx bytes come from."""
     try:
-        df, file_issues, halt_msg = common.process_file(file, file.filename)
+        df, file_issues, halt_msg = common.process_file(file_like, filename)
     except Exception as e:
         return render_upload_page(error=f"Couldn't read that file: {e}")
 
@@ -165,10 +166,24 @@ def generate():
     return _build_report_from_data(data, issues, [])
 
 
-@app.route("/sample")
+@app.route("/")
+def index():
+    return render_upload_page()
+
+
+@app.route("/generate", methods=["POST"])
+def generate():
+    file = request.files.get("file")
+    if file is None or file.filename == "":
+        return render_upload_page(error="Choose a .xlsx file first.")
+    return _generate_report_from_file(file, file.filename)
+
+
+@app.route("/sample", methods=["GET", "POST"])
 def sample():
-    try:
-        data, issues, halts = common.load_data()
-    except FileNotFoundError as e:
-        return f"<p>{e}</p>", 500
-    return _build_report_from_data(data, issues, halts)
+    """No raw data on hand? Build a synthetic two-period dataset in memory
+    and run it through the same pipeline as a real upload -- no file needed."""
+    buf = io.BytesIO()
+    create_sample_data.sample_dataframe().to_excel(buf, index=False)
+    buf.seek(0)
+    return _generate_report_from_file(buf, "sample_sales.xlsx")
