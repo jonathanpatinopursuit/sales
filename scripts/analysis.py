@@ -1,15 +1,47 @@
-"""Core analysis functions shared by the report generator and the Q&A tool."""
+"""Core analysis functions used by the report generator."""
 
 from __future__ import annotations
 
 import pandas as pd
 
 from common import pct_change
+from validate_data import DQ_LABEL_TEXT
 
 DECLINE_FLAG_THRESHOLD = -15.0   # % revenue drop vs prior period
 LOW_MARGIN_THRESHOLD = 0.10      # margin below 10% is flagged
 HIGH_DISCOUNT_THRESHOLD = 0.15   # average discount above 15% is "big"
 NEGATIVE_PROFIT_FLAG = True      # always flag any segment with negative total profit
+
+
+def _dq_summary(flags: pd.Series):
+    """Plain-language summary of dq_flag values among one group's rows, or
+    None if none of them are tagged. Only rows actually inside this group
+    are considered, so a metric is only annotated when a row that literally
+    contributed to it was flagged -- never because something nearby was.
+    Uses DQ_LABEL_TEXT so the reason is self-explanatory without needing to
+    know what an internal label like "clamped:discount" means."""
+    flagged = flags.dropna()
+    if flagged.empty:
+        return None
+    counts: dict[str, int] = {}
+    for val in flagged:
+        for label in str(val).split(";"):
+            counts[label] = counts.get(label, 0) + 1
+    parts = [f"{DQ_LABEL_TEXT.get(label, label)} ({n})" for label, n in sorted(counts.items())]
+    row_word = "row" if len(flagged) == 1 else "rows"
+    return f"{len(flagged)} {row_word} affected: " + ", ".join(parts)
+
+
+def _attach_dq_notes(df: pd.DataFrame, source_df: pd.DataFrame, by: str) -> pd.DataFrame:
+    """Merge a per-group dq_note column onto df, computed from source_df's
+    dq_flag column grouped by `by`. source_df must be the exact rows that
+    were aggregated to produce df's numbers (e.g. current_df), so the note
+    is always period- and group-scoped correctly."""
+    if "dq_flag" not in source_df.columns or source_df.empty:
+        df["dq_note"] = None
+        return df
+    notes = source_df.groupby(by)["dq_flag"].apply(_dq_summary).reset_index(name="dq_note")
+    return df.merge(notes, on=by, how="left")
 
 
 def grouped_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame, by: str) -> pd.DataFrame:
@@ -33,6 +65,7 @@ def grouped_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame, by: str) -
         lambda r: pct_change(r["revenue"], r["prior_revenue"]) if pd.notna(r.get("prior_revenue")) else None,
         axis=1,
     )
+    merged = _attach_dq_notes(merged, current_df, by)
     return merged.sort_values("revenue", ascending=False).reset_index(drop=True)
 
 
@@ -50,7 +83,7 @@ def product_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> pd.Data
 
 def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_n: int = 10) -> pd.DataFrame:
     if current_df.empty:
-        return pd.DataFrame(columns=[group_col, "avg_discount", "revenue", "profit", "margin", "margin_risk"])
+        return pd.DataFrame(columns=[group_col, "avg_discount", "revenue", "profit", "margin", "margin_risk", "dq_note"])
     g = current_df.groupby(group_col).agg(
         avg_discount=("discount", "mean"),
         revenue=("revenue", "sum"),
@@ -58,6 +91,7 @@ def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_
     ).reset_index()
     g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
     g["margin_risk"] = (g["avg_discount"] >= HIGH_DISCOUNT_THRESHOLD) & (g["margin"] < LOW_MARGIN_THRESHOLD)
+    g = _attach_dq_notes(g, current_df, group_col)
     return g.sort_values("avg_discount", ascending=False).head(top_n).reset_index(drop=True)
 
 
@@ -135,3 +169,20 @@ def build_summary_paragraph(current_df, prior_df, current_period, prior_period,
         parts.append("No critical issues were flagged this period.")
 
     return " ".join(parts)
+
+
+def analyze_sales(df: pd.DataFrame):
+    """Flat (no current/prior split) sales analysis: totals by region, category,
+    and product, discount impact on profit margin, and underperforming regions
+    (revenue below 20% of the average region's revenue)."""
+    by_region = df.groupby("region")["revenue"].sum().reset_index()
+    by_category = df.groupby("category")["revenue"].sum().reset_index()
+    by_product = df.groupby("product")["revenue"].sum().reset_index()
+
+    discount_impact = df.groupby("product")[["revenue", "discount", "profit"]].sum().reset_index()
+    discount_impact["profit_margin"] = (discount_impact["profit"] / discount_impact["revenue"] * 100).round(2)
+
+    avg = by_region["revenue"].mean()
+    flagged = by_region[by_region["revenue"] < avg * 0.2]
+
+    return by_region, by_category, by_product, discount_impact, flagged

@@ -2,12 +2,13 @@
 """Generate the Sales Organizer report from every Excel file in data/.
 
 Usage:
-    python3 scripts/generate_report.py
+    ./run.sh
+    (equivalent to: python3 scripts/generate_report.py)
 
 Outputs (written to reports/):
-    sales_report_<current-period>.xlsx  - formatted workbook, one sheet per section
-    sales_report_<current-period>.html  - single-file HTML report (view in a browser)
-    latest.xlsx / latest.html           - always overwritten copies of the newest report
+    latest.xlsx / latest.html           - always overwritten; open these every time
+    sales_report_<current-period>.xlsx  - dated copy, one sheet per section
+    sales_report_<current-period>.html  - dated copy, single-file HTML report
 """
 
 from __future__ import annotations
@@ -46,7 +47,8 @@ COLOR_GOOD = "#0ca30c"
 # ---------------------------------------------------------------------------
 
 def write_excel(path, summary_text, current_period, prior_period,
-                 category_df, region_df, discount_product_df, discount_category_df, flags_df):
+                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                 issues=(), halts=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
 
@@ -63,18 +65,56 @@ def write_excel(path, summary_text, current_period, prior_period,
         good_fmt = workbook.add_format({"font_color": COLOR_GOOD_TEXT, "bold": True})
         bad_fmt = workbook.add_format({"font_color": COLOR_CRITICAL, "bold": True})
         wrap_fmt = workbook.add_format({"text_wrap": True, "valign": "top"})
+        halt_fmt = workbook.add_format({"bold": True, "font_color": "#ffffff", "bg_color": COLOR_CRITICAL})
+        warn_fmt = workbook.add_format({"bold": True, "font_color": "#7a5b00", "bg_color": "#fef9c3"})
+        skip_fmt = workbook.add_format({"bold": True, "font_color": COLOR_INK_SECONDARY, "bg_color": "#f3f4f6"})
+        warn_text_fmt = workbook.add_format({"text_wrap": True, "valign": "top", "bg_color": "#fef9c3"})
+        skip_text_fmt = workbook.add_format({"text_wrap": True, "valign": "top", "bg_color": "#f3f4f6"})
+        halt_text_fmt = workbook.add_format({"text_wrap": True, "valign": "top", "bg_color": "#fee2e2"})
 
         # --- Summary sheet ---
+        # Data Quality banner comes first (row 2 onward) -- before the summary
+        # paragraph -- so a user sees whether the numbers below are trustworthy
+        # before reading them, not after.
         ws = workbook.add_worksheet("Summary")
         writer.sheets["Summary"] = ws
         ws.set_column("A:A", 100)
         ws.write("A1", "Sales Organizer Report", workbook.add_format({"bold": True, "font_size": 16}))
         ws.write("A2", f"Current period: {current_period}   |   Prior period: {prior_period}")
-        ws.write("A4", summary_text, wrap_fmt)
-        ws.set_row(3, 60)
 
-        def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=()):
+        warn_issues = [i for i in issues if i["level"] == "warn"]
+        skip_issues = [i for i in issues if i["level"] == "skip"]
+
+        next_row = 2
+        if halts:
+            ws.write(next_row, 0, f"🚫 HALT — {len(halts)} file(s) rejected", halt_fmt)
+            text = "\n".join(f"🚫 {h}" for h in halts)
+            ws.write(next_row + 1, 0, text, halt_text_fmt)
+            ws.set_row(next_row + 1, 16 * len(halts) + 10)
+            next_row += 2
+        if warn_issues:
+            ws.write(next_row, 0, f"⚠ Warnings — {len(warn_issues)} item(s)", warn_fmt)
+            text = "\n".join(f"⚠ {w['message']}" for w in warn_issues)
+            ws.write(next_row + 1, 0, text, warn_text_fmt)
+            ws.set_row(next_row + 1, 16 * len(warn_issues) + 10)
+            next_row += 2
+        if skip_issues:
+            total_skipped = sum(s["count"] for s in skip_issues)
+            ws.write(next_row, 0, f"⬜ Skipped — {total_skipped} row(s)", skip_fmt)
+            text = "\n".join(f"⬜ {s['message']}" for s in skip_issues)
+            ws.write(next_row + 1, 0, text, skip_text_fmt)
+            ws.set_row(next_row + 1, 16 * len(skip_issues) + 10)
+            next_row += 2
+
+        ws.write(next_row, 0, summary_text, wrap_fmt)
+        ws.set_row(next_row, 60)
+        next_row += 1
+
+        def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=(), flag_col=None):
             df = df.copy()
+            # dq_note is an internal annotation, not a data column -- pull it out
+            # before writing, keep it aligned by position for the inline-flag pass below.
+            dq_notes = df.pop("dq_note").reset_index(drop=True) if "dq_note" in df.columns else None
             df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
             ws = writer.sheets[sheet_name]
             for col_num, col_name in enumerate(df.columns):
@@ -97,16 +137,29 @@ def write_excel(path, summary_text, current_period, prior_period,
                                        {"type": "cell", "criteria": "<", "value": 0, "format": bad_fmt})
                 ws.conditional_format(f"{col_letter}{first_row}:{col_letter}{last_row}",
                                        {"type": "cell", "criteria": ">=", "value": 0, "format": good_fmt})
+            # inline flag: a row is only flagged if ITS OWN dq_note says a row that
+            # actually contributed to that total was tagged -- not because of anything
+            # else nearby (dq_note is computed per-group in analysis.py from the exact
+            # rows behind that number).
+            if flag_col and flag_col in df.columns and dq_notes is not None:
+                col_idx = list(df.columns).index(flag_col)
+                flag_cell_fmt = workbook.add_format({"font_color": COLOR_WARNING, "italic": True})
+                for row_idx, note in enumerate(dq_notes):
+                    if pd.notna(note):
+                        val = df.iloc[row_idx][flag_col]
+                        ws.write(2 + row_idx, col_idx, f"{val}  ⚠ {note}", flag_cell_fmt)
             return ws
 
         write_table(category_df, "By Category", pct_cols=["pct_change"],
-                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"])
+                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
+                    flag_col="category")
         write_table(region_df, "By Region", pct_cols=["pct_change"],
-                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"])
+                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
+                    flag_col="region")
         write_table(discount_product_df, "Discounts by Product", money_cols=["revenue", "profit"],
-                    plain_pct_cols=["avg_discount", "margin"])
+                    plain_pct_cols=["avg_discount", "margin"], flag_col="product")
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
-                    plain_pct_cols=["avg_discount", "margin"])
+                    plain_pct_cols=["avg_discount", "margin"], flag_col="category")
         write_table(flags_df, "Flags")
 
 
@@ -130,6 +183,16 @@ def _delta_span(v):
     cls = "delta-up" if v >= 0 else "delta-down"
     arrow = "▲" if v >= 0 else "▼"
     return f'<span class="{cls}">{arrow} {abs(v):.1f}%</span>'
+
+
+def _name_with_note(value, dq_note):
+    """Render a dimension name (product/category/region), with an inline flag
+    only if dq_note is set -- dq_note is computed per-group in analysis.py from
+    the exact rows behind that group's numbers, so this never flags a name just
+    because something unrelated nearby had an issue."""
+    if pd.notna(dq_note):
+        return f'{value} <span class="dq-flag" title="{dq_note}">⚠️ <em>data adjusted</em></span>'
+    return str(value)
 
 
 def _bar_row(label, value, max_value):
@@ -164,18 +227,48 @@ def _flag_card(flag):
       </div>"""
 
 
-def _df_to_table(df, columns, headers, formatters):
+def _df_to_table(df, columns, headers, formatters, name_col=None, note_col=None):
     thead = "".join(f"<th>{h}</th>" for h in headers)
     rows_html = []
     for _, row in df.iterrows():
-        cells = "".join(f"<td>{formatters.get(c, str)(row[c])}</td>" for c in columns)
-        rows_html.append(f"<tr>{cells}</tr>")
+        cells = []
+        for c in columns:
+            val = formatters.get(c, str)(row[c])
+            if name_col and c == name_col and note_col:
+                val = _name_with_note(row[c], row.get(note_col))
+            cells.append(f"<td>{val}</td>")
+        rows_html.append(f"<tr>{''.join(cells)}</tr>")
     return f"<table><thead><tr>{thead}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
+
+
+def render_dq_banner(issues=(), halts=()):
+    """Build the 3-tier data-quality banner: HALT (red) / WARN (yellow) / SKIP (gray)."""
+    if not issues and not halts:
+        return ""
+
+    warn_issues = [i for i in issues if i["level"] == "warn"]
+    skip_issues = [i for i in issues if i["level"] == "skip"]
+
+    rows = []
+    for h in halts:
+        rows.append(f'<div class="dq-halt">🚫 <strong>HALT:</strong> {h}</div>')
+    if warn_issues:
+        summary = "; ".join(w["message"] for w in warn_issues)
+        rows.append(f'<div class="dq-warn">⚠️ <strong>{len(warn_issues)} warning(s)</strong> — {summary}</div>')
+    if skip_issues:
+        total_skipped = sum(s["count"] for s in skip_issues)
+        summary = "; ".join(s["message"] for s in skip_issues)
+        rows.append(f'<div class="dq-skip">⬜ <strong>{total_skipped} row(s) skipped</strong> — {summary}</div>')
+
+    return f'<div id="dq-banner">{"".join(rows)}</div>'
 
 
 def write_html(path, summary_text, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags,
-                total_revenue, total_profit, overall_margin, revenue_change):
+                total_revenue, total_profit, overall_margin, revenue_change,
+                issues=(), halts=()):
+
+    data_quality_html = render_dq_banner(issues, halts)
 
     stat_tiles = "".join([
         _stat_tile("Total Revenue", _fmt_money(total_revenue), revenue_change),
@@ -197,11 +290,14 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
             "revenue": _fmt_money, "prior_revenue": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
             "pct_change": _delta_span, "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
         },
+        name_col="region", note_col="dq_note",
     )
 
     def discount_table(df):
+        name_col = "product" if "product" in df.columns else "category"
+
         return _df_to_table(
-            df, ["product" if "product" in df.columns else "category", "avg_discount", "revenue", "margin", "margin_risk"],
+            df, [name_col, "avg_discount", "revenue", "margin", "margin_risk"],
             ["Name", "Avg Discount", "Revenue", "Margin", "Risk"],
             {
                 "avg_discount": lambda v: f"{v*100:.1f}%",
@@ -209,6 +305,7 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
                 "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
                 "margin_risk": lambda v: '<span class="risk-badge">⚠ margin risk</span>' if v else "—",
             },
+            name_col=name_col, note_col="dq_note",
         )
 
     flags_html = "".join(_flag_card(f) for f in flags) if flags else '<p class="muted">No flags raised this period.</p>'
@@ -226,6 +323,9 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
     --border: rgba(11,11,11,0.10); --series-1: #2a78d6;
     --delta-good: #006300; --delta-bad: #d03b3b;
     --status-warning: #fab219; --status-critical: #d03b3b;
+    --dq-halt-bg: #fee2e2; --dq-halt-border: #dc2626; --dq-halt-text: #7f1d1d;
+    --dq-warn-bg: #fef9c3; --dq-warn-border: #ca8a04; --dq-warn-text: #713f12;
+    --dq-skip-bg: #f3f4f6; --dq-skip-border: #6b7280; --dq-skip-text: #374151;
   }}
   @media (prefers-color-scheme: dark) {{
     :root:where(:not([data-theme="light"])) .viz-root {{
@@ -234,6 +334,9 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
       --text-secondary: #c3c2b7; --text-muted: #898781; --gridline: #2c2c2a;
       --border: rgba(255,255,255,0.10); --series-1: #3987e5;
       --delta-good: #0ca30c; --delta-bad: #e66767;
+      --dq-halt-bg: rgba(220,38,38,0.16); --dq-halt-border: #e66767; --dq-halt-text: #ffb4b4;
+      --dq-warn-bg: rgba(202,138,4,0.18); --dq-warn-border: #fab219; --dq-warn-text: #ffdd8a;
+      --dq-skip-bg: rgba(255,255,255,0.06); --dq-skip-border: #898781; --dq-skip-text: #c3c2b7;
     }}
   }}
   :root[data-theme="dark"] .viz-root {{
@@ -242,6 +345,9 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
     --text-secondary: #c3c2b7; --text-muted: #898781; --gridline: #2c2c2a;
     --border: rgba(255,255,255,0.10); --series-1: #3987e5;
     --delta-good: #0ca30c; --delta-bad: #e66767;
+    --dq-halt-bg: rgba(220,38,38,0.16); --dq-halt-border: #e66767; --dq-halt-text: #ffb4b4;
+    --dq-warn-bg: rgba(202,138,4,0.18); --dq-warn-border: #fab219; --dq-warn-text: #ffdd8a;
+    --dq-skip-bg: rgba(255,255,255,0.06); --dq-skip-border: #898781; --dq-skip-text: #c3c2b7;
   }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -251,6 +357,12 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
   .meta {{ color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 24px; }}
   .summary {{ background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
               padding: 18px 20px; line-height: 1.55; margin-bottom: 28px; }}
+  #dq-banner {{ margin-bottom: 28px; }}
+  .dq-halt, .dq-warn, .dq-skip {{ border-radius: 8px; padding: 10px 16px; margin-bottom: 6px; font-size: 0.88rem; }}
+  .dq-halt {{ background: var(--dq-halt-bg); border-left: 4px solid var(--dq-halt-border); color: var(--dq-halt-text); }}
+  .dq-warn {{ background: var(--dq-warn-bg); border-left: 4px solid var(--dq-warn-border); color: var(--dq-warn-text); }}
+  .dq-skip {{ background: var(--dq-skip-bg); border-left: 4px solid var(--dq-skip-border); color: var(--dq-skip-text); }}
+  .dq-flag {{ cursor: help; color: var(--status-warning); font-size: 0.85em; margin-left: 4px; }}
   h2 {{ font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em;
         color: var(--text-secondary); margin: 36px 0 12px; }}
   .stat-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }}
@@ -291,6 +403,7 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
     &nbsp;|&nbsp; Prior period: <strong>{prior_period if prior_period is not None else 'n/a'}</strong>
     &nbsp;|&nbsp; Generated {generated_at}</div>
 
+  {data_quality_html}
   <div class="summary">{summary_text}</div>
 
   <h2>Overview</h2>
@@ -332,7 +445,7 @@ def write_html(path, summary_text, current_period, prior_period, generated_at,
 def main():
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    data = common.load_data()
+    data, issues, halts = common.load_data()
     current_df, prior_df, current_period, prior_period = common.split_periods(data)
 
     category_df = analysis.category_summary(current_df, prior_df)
@@ -358,20 +471,38 @@ def main():
     html_path = os.path.join(REPORTS_DIR, f"sales_report_{stamp}.html")
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
-                category_df, region_df, discount_product_df, discount_category_df, flags_df)
+                category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                issues, halts)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags,
-               total_revenue, total_profit, overall_margin, revenue_change)
+               total_revenue, total_profit, overall_margin, revenue_change,
+               issues, halts)
 
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))
     shutil.copyfile(html_path, os.path.join(REPORTS_DIR, "latest.html"))
 
-    print(f"Report generated for {current_period} (prior: {prior_period}).")
-    print(f"  Excel: {xlsx_path}")
-    print(f"  HTML:  {html_path}")
-    print(f"  Also updated: reports/latest.xlsx and reports/latest.html")
+    if halts:
+        print(f"🚫 {len(halts)} file(s) could not be used:")
+        for h in halts:
+            print(f"   - {h}")
+        print()
+
+    if current_period is None:
+        print("⚠ No usable data was found — fix the file(s) above and run this again.")
+    else:
+        period_note = f" (prior period: {prior_period})" if prior_period is not None else " (no prior period yet)"
+        print(f"✅ Report generated for {current_period}{period_note}.")
+
+    print(f"\n📄 Open this: {os.path.join(REPORTS_DIR, 'latest.html')}  (or latest.xlsx in Excel)")
+    print(f"   Dated copy saved as: {os.path.basename(xlsx_path)}, {os.path.basename(html_path)}")
+
+    if issues:
+        print(f"\n⚠ {len(issues)} data quality issue(s) found — see the banner at the top of the report:")
+        for i in issues:
+            icon = "⚠" if i["level"] == "warn" else "⬜"
+            print(f"   {icon} {i['message']}")
 
 
 if __name__ == "__main__":

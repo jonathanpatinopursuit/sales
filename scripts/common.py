@@ -7,17 +7,7 @@ import os
 
 import pandas as pd
 
-REQUIRED_COLUMNS = [
-    "date",
-    "customer",
-    "product",
-    "category",
-    "region",
-    "quantity",
-    "price",
-    "discount",
-    "profit",
-]
+from validate_data import REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
@@ -32,8 +22,21 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
     return sorted(files)
 
 
-def load_data(data_dir: str = DATA_DIR) -> pd.DataFrame:
-    """Load and concatenate every Excel export found in data_dir."""
+EMPTY_COLUMNS = REQUIRED_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
+
+
+def load_data(data_dir: str = DATA_DIR) -> tuple[pd.DataFrame, list[dict], list[str]]:
+    """Load, validate, and normalize every Excel export found in data_dir.
+
+    Returns (data, issues, halts):
+      - issues: non-fatal data-quality dicts from validate_data.validate()
+        (skipped rows, clamped discounts, duplicates) for the report's banner.
+      - halts: messages for files that were rejected outright (missing
+        required columns, or too many unparseable dates). A halted file is
+        excluded and the run continues with whatever files remain valid —
+        it does not crash the whole run; the halt is surfaced in the report
+        instead.
+    """
     files = find_data_files(data_dir)
     if not files:
         raise FileNotFoundError(
@@ -42,43 +45,79 @@ def load_data(data_dir: str = DATA_DIR) -> pd.DataFrame:
         )
 
     frames = []
+    issues: list[dict] = []
+    halts: list[str] = []
     for f in files:
+        filename = os.path.basename(f)
         df = pd.read_excel(f)
         df.columns = [str(c).strip().lower() for c in df.columns]
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing:
-            raise ValueError(
-                f"{os.path.basename(f)} is missing expected column(s): {', '.join(missing)}. "
-                f"Expected columns: {', '.join(REQUIRED_COLUMNS)}"
+            col_word = "column" if len(missing) == 1 else "columns"
+            halts.append(
+                f"'{filename}' can't be used — it's missing the {col_word}: {', '.join(missing)}. "
+                f"Fix: open the file, add a header named exactly '{missing[0]}'"
+                + (f" (and: {', '.join(missing[1:])})" if len(missing) > 1 else "")
+                + f" with the right values in each row, then run the report again. "
+                f"All required columns: {', '.join(REQUIRED_COLUMNS)}."
             )
-        df["__source_file"] = os.path.basename(f)
-        frames.append(df[REQUIRED_COLUMNS + ["__source_file"]])
+            continue
+        df = df[REQUIRED_COLUMNS].copy()
+
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        for col in ("quantity", "price", "discount", "profit"):
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        # fillna("") first so a genuinely missing cell becomes "" rather than the
+        # literal string "nan" that .astype(str) would otherwise produce -- needed
+        # for validate()'s blank-region/category checks to work correctly.
+        for col in ("customer", "product", "category", "region"):
+            df[col] = df[col].fillna("").astype(str).str.strip()
+
+        # Revenue = quantity * price * (1 - discount), where discount is a 0..1 rate.
+        # If discount looks like it's stored as a percentage (e.g. 10 instead of
+        # 0.10), normalize it down to a rate *before* validate() checks the range,
+        # so a legitimate "10" doesn't get mistaken for a 1000% discount and
+        # clamped to 100%.
+        if (df["discount"] > 1).any():
+            df["discount"] = df["discount"].where(df["discount"] <= 1, df["discount"] / 100.0)
+
+        try:
+            df, file_issues = validate(df, filename)
+        except ValueError as e:
+            halts.append(str(e))
+            continue
+        issues.extend(file_issues)
+
+        df["__source_file"] = filename
+        frames.append(df)
+
+    if not frames:
+        return pd.DataFrame(columns=EMPTY_COLUMNS), issues, halts
 
     data = pd.concat(frames, ignore_index=True)
 
-    data["date"] = pd.to_datetime(data["date"], errors="coerce")
-    bad_dates = data["date"].isna().sum()
-    if bad_dates:
-        data = data.dropna(subset=["date"])
-
-    for col in ("quantity", "price", "discount", "profit"):
-        data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0)
-
-    for col in ("customer", "product", "category", "region"):
-        data[col] = data[col].astype(str).str.strip()
-
-    # Revenue = quantity * price * (1 - discount), where discount is a 0..1 rate.
-    # If discount looks like it's stored as a percentage (e.g. 10 instead of 0.10),
-    # normalize it down to a rate.
-    disc = data["discount"]
-    if (disc > 1).any():
-        data["discount"] = disc.where(disc <= 1, disc / 100.0)
+    # validate() only catches duplicates within a single file; also check
+    # across files, in case the same export got saved under two filenames.
+    # Compare only the business columns (not dq_flag), or two otherwise-identical
+    # rows tagged differently by earlier checks would wrongly look distinct.
+    cross_file_dupe_mask = data.duplicated(subset=REQUIRED_COLUMNS, keep=False)
+    tag_dq_flag(data, cross_file_dupe_mask, "flagged:duplicate")
+    cross_file_dupes = int(data.duplicated(subset=REQUIRED_COLUMNS).sum())
+    if cross_file_dupes:
+        issues.append({
+            "level": "warn",
+            "message": (
+                f"Found {cross_file_dupes} row(s) duplicated across multiple files in data/ "
+                f"— check for the same export saved under more than one filename."
+            ),
+            "count": cross_file_dupes,
+        })
 
     data["revenue"] = data["quantity"] * data["price"] * (1 - data["discount"])
     data["margin"] = (data["profit"] / data["revenue"].replace(0, pd.NA)).astype(float)
     data["period"] = data["date"].dt.to_period("M")
 
-    return data.sort_values("date").reset_index(drop=True)
+    return data.sort_values("date").reset_index(drop=True), issues, halts
 
 
 def current_and_prior_period(data: pd.DataFrame):
