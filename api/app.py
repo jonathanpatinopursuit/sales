@@ -109,7 +109,7 @@ def render_upload_page(error: str | None = None) -> str:
   </div>
   <hr class="divider">
   {error_html}
-  <p class="lede">Revenue and margin by category and region, biggest discounts, and flags for anything declining -- from one uploaded export.</p>
+  <p class="lede">Sales Organizer turns weekly sales data into a sales report.</p>
   <form method="POST" action="/generate" enctype="multipart/form-data">
     <div class="line-row">
       <span class="label">UPLOAD FILE</span>
