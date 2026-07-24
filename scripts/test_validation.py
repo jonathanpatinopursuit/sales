@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
 
-from validate_data import validate
+from validate_data import OPTIONAL_COLUMNS, validate
 
 _failures = 0
 
@@ -51,12 +51,29 @@ def make_clean_df(n: int = 25) -> pd.DataFrame:
 
 
 def test_missing_column():
-    df = make_clean_df().drop(columns=["discount"])
+    df = make_clean_df().drop(columns=["price"])
     try:
         validate(df, "test_missing_col")
         _check(False, "", "should have halted on a missing required column")
     except ValueError as e:
         _check(True, f"HALT caught: {e}", "")
+
+
+def test_missing_optional_columns_ok():
+    """customer/region/discount are optional -- validate() itself still
+    expects them present (common.py fills defaults before calling it), but
+    given missing_optional it should skip their per-row blank checks rather
+    than flagging every row for a column the file never had."""
+    df = make_clean_df()
+    for col, default in OPTIONAL_COLUMNS.items():
+        df[col] = default
+    result, issues = validate(df, "test_missing_optional", missing_optional=frozenset(OPTIONAL_COLUMNS))
+    _check(len(result) == len(df), "no rows dropped", f"expected {len(df)} rows, got {len(result)}")
+    noisy = [i for i in issues if "missing region" in i["message"] or "missing customer" in i["message"]]
+    _check(not noisy, "no blank-region/customer noise for a column the file never had",
+           f"unexpected issues: {noisy}")
+    _check(result["dq_flag"].isna().all(), "no rows tagged invalid_region/invalid_customer",
+           f"unexpectedly tagged: {result['dq_flag'].dropna().tolist()}")
 
 
 def test_bad_dates_warn():
@@ -174,6 +191,7 @@ def test_multiple_issues_on_one_row():
 if __name__ == "__main__":
     tests = [
         ("Missing Column", test_missing_column),
+        ("Missing Optional Columns OK", test_missing_optional_columns_ok),
         ("Bad Dates - Warn (<=5%)", test_bad_dates_warn),
         ("Bad Dates - Halt (>5%)", test_bad_dates_halt),
         ("Invalid Quantity/Price", test_invalid_qty_price),

@@ -62,22 +62,29 @@ of the four file types.
 
 ### 1. Clean format
 
-Case-insensitive column names, any column order, values already numeric:
+Case-insensitive column names, any column order, values already numeric.
+`customer`, `region`, and `discount` are optional — leave any of them out
+and the report still generates, using only the columns you actually have:
 
-| column     | description                                             |
-|------------|----------------------------------------------------------|
-| `date`     | order date                                              |
-| `customer` | customer name                                           |
-| `product`  | product name                                            |
-| `category` | product category                                        |
-| `region`   | sales region                                            |
-| `quantity` | units sold                                              |
-| `price`    | unit price                                              |
-| `discount` | discount rate applied (e.g. `0.1` for 10%, or `10`)     |
-| `profit`   | total profit for that line item                         |
+| column     | required? | description                                             |
+|------------|-----------|------------------------------------------------------------|
+| `date`     | required  | order date                                              |
+| `product`  | required  | product name                                            |
+| `category` | required  | product category                                        |
+| `quantity` | required  | units sold                                              |
+| `price`    | required  | unit price                                              |
+| `profit`   | required  | total profit for that line item                         |
+| `customer` | optional  | customer name — defaults to `"Unknown"` if the column isn't present |
+| `region`   | optional  | sales region — defaults to `"Unknown"` if the column isn't present (the region breakdown then shows one combined bucket instead of a per-region split) |
+| `discount` | optional  | discount rate applied (e.g. `0.1` for 10%, or `10`) — defaults to `0` (no discount) if the column isn't present |
 
 Revenue is derived as `quantity * price * (1 - discount)`. You don't need to
 compute revenue yourself.
+
+This only applies to a column being missing entirely. If the column exists
+but is blank on some rows, that's still flagged as a data-quality issue (see
+[Data quality checks](#data-quality-checks)) rather than defaulted silently —
+missing data you didn't track is different from missing data you did.
 
 ### 2. Raw export format
 
@@ -116,11 +123,17 @@ Every file is validated on intake (`scripts/validate_data.py`) before it's used:
 | More than 5% of rows have an unparseable/blank date | — | **Halts** — usually means the wrong column or a format the parser doesn't recognize; other files still process normally |
 | A few rows (≤5%) have an unparseable/blank date | `skipped:bad_date` | Those rows are **skipped**, rest of the file is used |
 | A row has zero/negative quantity or a negative price | `skipped:invalid_qty_price` | That row is **skipped** |
-| A row has a blank/missing region | `flagged:invalid_region` | **Kept** (dropping it would lose real revenue), just flagged |
+| A row has a blank/missing region, but the `region` column exists | `flagged:invalid_region` | **Kept** (dropping it would lose real revenue), just flagged |
+| A row has a blank/missing customer, but the `customer` column exists | `flagged:invalid_customer` | **Kept**, just flagged |
 | A row has a blank/missing category | `flagged:invalid_category` | **Kept**, just flagged |
 | A discount is outside 0–100% | `clamped:discount` | **Clamped** to the nearest valid bound, row kept |
 | A row has negative profit | `flagged:negative_profit` | **Kept** — not necessarily wrong (could be a real loss), but worth surfacing |
 | Duplicate rows (within a file, or the same export saved under two filenames) | `flagged:duplicate` | **Kept** — nothing is removed automatically, since legitimate repeat orders can look identical |
+
+The region/customer blank checks above only fire when that column exists in
+the file but is empty on some rows — a file that never had a `region` or
+`customer` column at all isn't flagged; see [Expected input file
+format](#expected-input-file-format) for how those columns default instead.
 
 Every row gets tagged with its own `dq_flag` (skipped rows are tagged before
 being dropped, purely so the check that dropped them can be tested in

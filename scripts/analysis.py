@@ -154,7 +154,7 @@ def build_summary_paragraph(current_df, prior_df, current_period, prior_period,
         top_cat = category_df.iloc[0]
         parts.append(f"{top_cat['category']} was the top category by revenue (${top_cat['revenue']:,.0f}).")
 
-    if not region_df.empty and region_df["pct_change"].notna().any():
+    if len(region_df) > 1 and region_df["pct_change"].notna().any():
         worst = region_df.dropna(subset=["pct_change"]).sort_values("pct_change").iloc[0]
         best = region_df.dropna(subset=["pct_change"]).sort_values("pct_change").iloc[-1]
         if worst["pct_change"] < 0:

@@ -8,7 +8,7 @@ import os
 import pandas as pd
 
 from clean_raw_export import clean_raw_export, looks_like_raw_export
-from validate_data import REQUIRED_COLUMNS, tag_dq_flag, validate
+from validate_data import ALL_COLUMNS, OPTIONAL_COLUMNS, REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
@@ -23,7 +23,7 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
     return sorted(files)
 
 
-EMPTY_COLUMNS = REQUIRED_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
+EMPTY_COLUMNS = ALL_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
 
 
 def _read_upload(file, filename: str) -> pd.DataFrame:
@@ -73,9 +73,18 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
             f"Fix: open the file, add a header named exactly '{missing[0]}'"
             + (f" (and: {', '.join(missing[1:])})" if len(missing) > 1 else "")
             + f" with the right values in each row, then run the report again. "
-            f"All required columns: {', '.join(REQUIRED_COLUMNS)}."
+            f"Required columns: {', '.join(REQUIRED_COLUMNS)}. "
+            f"Optional columns (the report still works without them): {', '.join(OPTIONAL_COLUMNS)}."
         )
-    df = df[REQUIRED_COLUMNS].copy()
+
+    # Optional columns the file doesn't have at all get a default rather than
+    # halting -- e.g. no `region` column means every row lands in one
+    # "Unknown" region bucket instead of the file being rejected.
+    missing_optional = {c for c in OPTIONAL_COLUMNS if c not in df.columns}
+    for col in missing_optional:
+        df[col] = OPTIONAL_COLUMNS[col]
+
+    df = df[ALL_COLUMNS].copy()
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     for col in ("quantity", "price", "discount", "profit"):
@@ -95,7 +104,7 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
         df["discount"] = df["discount"].where(df["discount"] <= 1, df["discount"] / 100.0)
 
     try:
-        df, file_issues = validate(df, filename)
+        df, file_issues = validate(df, filename, missing_optional=frozenset(missing_optional))
     except ValueError as e:
         return None, [], str(e)
 
@@ -133,9 +142,9 @@ def finalize_data(frames: list[pd.DataFrame], issues: list[dict]) -> tuple[pd.Da
     # across files, in case the same export got saved under two filenames.
     # Compare only the business columns (not dq_flag), or two otherwise-identical
     # rows tagged differently by earlier checks would wrongly look distinct.
-    cross_file_dupe_mask = data.duplicated(subset=REQUIRED_COLUMNS, keep=False)
+    cross_file_dupe_mask = data.duplicated(subset=ALL_COLUMNS, keep=False)
     tag_dq_flag(data, cross_file_dupe_mask, "flagged:duplicate")
-    cross_file_dupes = int(data.duplicated(subset=REQUIRED_COLUMNS).sum())
+    cross_file_dupes = int(data.duplicated(subset=ALL_COLUMNS).sum())
     if cross_file_dupes:
         issues.append({
             "level": "warn",

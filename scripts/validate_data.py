@@ -39,15 +39,28 @@ import pandas as pd
 
 REQUIRED_COLUMNS = [
     "date",
-    "customer",
     "product",
     "category",
-    "region",
     "quantity",
     "price",
-    "discount",
     "profit",
 ]
+
+# Optional -- a file missing these still gets a full report. common.py fills
+# in the default (before validate() ever sees the row) when a column is
+# absent from the source entirely, and tells validate() which columns it
+# filled so the blank-value checks below don't fire on every single row for
+# data that was never tracked in the first place.
+OPTIONAL_COLUMNS = {
+    "customer": "Unknown",
+    "region": "Unknown",
+    "discount": 0.0,
+}
+
+# Full business-column shape (required + optional) in a fixed order -- used
+# wherever code needs "every column a row can carry" rather than "the
+# columns a file must have to be accepted" (de-duplication, reindexing).
+ALL_COLUMNS = ["date", "customer", "product", "category", "region", "quantity", "price", "discount", "profit"]
 
 DATE_HALT_THRESHOLD = 0.05  # halt the file if more than this fraction of dates are bad
 
@@ -81,7 +94,14 @@ def tag_dq_flag(df: pd.DataFrame, mask: pd.Series, label: str) -> None:
     df.loc[mask, "dq_flag"] = df.loc[mask, "dq_flag"].apply(_combine)
 
 
-def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, list[dict]]:
+def validate(
+    df: pd.DataFrame, filename: str = "input", missing_optional: frozenset[str] = frozenset()
+) -> tuple[pd.DataFrame, list[dict]]:
+    """`missing_optional` names OPTIONAL_COLUMNS that weren't in the source
+    file at all (common.py filled them with a default before calling this).
+    Their per-row blank-value checks are skipped -- every row would otherwise
+    "fail" the same check, which would just be noise for a column the file
+    never had, not a real data-quality problem."""
     # Check 1: missing required columns -- halts
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
@@ -121,15 +141,17 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
         })
         df = df[~bad_qty]
 
-    # Check 4: blank/missing region -- kept (dropping would lose real revenue), just flagged
-    bad_region = df["region"].astype(str).str.strip() == ""
-    tag_dq_flag(df, bad_region, "flagged:invalid_region")
-    if bad_region.any():
-        issues.append({
-            "level": "warn",
-            "message": f"{bad_region.sum()} row(s) have a blank/missing region in {filename}.",
-            "count": int(bad_region.sum()),
-        })
+    # Check 4: blank/missing region -- kept (dropping would lose real revenue), just flagged.
+    # Skipped when the file never had a region column at all (see missing_optional above).
+    if "region" not in missing_optional:
+        bad_region = df["region"].astype(str).str.strip() == ""
+        tag_dq_flag(df, bad_region, "flagged:invalid_region")
+        if bad_region.any():
+            issues.append({
+                "level": "warn",
+                "message": f"{bad_region.sum()} row(s) have a blank/missing region in {filename}.",
+                "count": int(bad_region.sum()),
+            })
 
     # Check 5: blank/missing category -- kept, just flagged
     bad_category = df["category"].astype(str).str.strip() == ""
@@ -142,14 +164,15 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
         })
 
     # Check 5b: blank/missing customer -- kept, just flagged (same reasoning as region/category)
-    bad_customer = df["customer"].astype(str).str.strip() == ""
-    tag_dq_flag(df, bad_customer, "flagged:invalid_customer")
-    if bad_customer.any():
-        issues.append({
-            "level": "warn",
-            "message": f"{bad_customer.sum()} row(s) have a blank/missing customer in {filename}.",
-            "count": int(bad_customer.sum()),
-        })
+    if "customer" not in missing_optional:
+        bad_customer = df["customer"].astype(str).str.strip() == ""
+        tag_dq_flag(df, bad_customer, "flagged:invalid_customer")
+        if bad_customer.any():
+            issues.append({
+                "level": "warn",
+                "message": f"{bad_customer.sum()} row(s) have a blank/missing customer in {filename}.",
+                "count": int(bad_customer.sum()),
+            })
 
     # Check 6: discount outside 0-100% (post-normalization, so this really is bad data) -- clamped, kept
     bad_disc = (df["discount"] < 0) | (df["discount"] > 1)
@@ -178,9 +201,9 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
     # look identical). Must run last, and compares only the business columns (not
     # dq_flag), or two otherwise-identical rows tagged differently by earlier checks
     # would wrongly look distinct.
-    dupe_mask = df.duplicated(subset=REQUIRED_COLUMNS, keep=False)
+    dupe_mask = df.duplicated(subset=ALL_COLUMNS, keep=False)
     tag_dq_flag(df, dupe_mask, "flagged:duplicate")
-    dupes = int(df.duplicated(subset=REQUIRED_COLUMNS).sum())
+    dupes = int(df.duplicated(subset=ALL_COLUMNS).sum())
     if dupes:
         issues.append({
             "level": "warn",
