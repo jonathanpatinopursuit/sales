@@ -22,6 +22,9 @@ will say exactly what's wrong and how to fix it.
 
 Prefer a browser to the command line? See [Web UI (Streamlit)](#web-ui-streamlit) below.
 
+**Live app:** [sales-calculator-tawny.vercel.app](https://sales-calculator-tawny.vercel.app)
+(upload a file, or generate one from sample data, right in the browser — nothing to publish.)
+
 **Live report:** https://jonathanpatinopursuit.github.io/sales/
 (publishing this is a manual step — see [Publishing the live report](#publishing-the-live-report) —
 so it only ever shows a report you've explicitly chosen to make public.)
