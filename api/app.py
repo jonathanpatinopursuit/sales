@@ -175,16 +175,12 @@ def _build_report_from_data(data, issues, halts) -> str:
 def _generate_report_from_file(file_like, filename: str) -> str:
     """Shared by /generate (a real upload) and /sample (synthetic data) so
     both run through the exact same read/validate/analyze pipeline -- the
-    only difference is where the raw bytes come from. A .csv/.tsv export
-    goes through process_raw_export_file() (different columns/formatting,
-    see clean_raw_export.py); anything else is treated as the already-clean
-    .xlsx shape via process_file()."""
-    is_raw_export = filename.lower().endswith((".csv", ".tsv"))
+    only difference is where the raw bytes come from. common.process_file()
+    itself figures out from the file's column headers whether it's a raw
+    export (see clean_raw_export.py) or the already-clean shape, regardless
+    of whether it's .xlsx, .csv, or .tsv."""
     try:
-        if is_raw_export:
-            df, file_issues, halt_msg = common.process_raw_export_file(file_like, filename)
-        else:
-            df, file_issues, halt_msg = common.process_file(file_like, filename)
+        df, file_issues, halt_msg = common.process_file(file_like, filename)
     except Exception as e:
         return render_upload_page(error=f"Couldn't read that file: {e}")
 

@@ -38,6 +38,17 @@ RAW_COLUMN_MAP = {
     "Discount_Pct": "discount",
     "Profit": "profit",
 }
+_RAW_COLUMN_MAP_LOWER = {k.lower(): v for k, v in RAW_COLUMN_MAP.items()}
+
+
+def looks_like_raw_export(columns) -> bool:
+    """True if `columns` has every column this raw-export format needs,
+    matched case-insensitively -- used to decide which pipeline a file goes
+    through by its actual headers, not its file extension. A raw export can
+    be saved as .xlsx just as easily as .csv/.tsv, so the extension alone
+    isn't a reliable signal of which schema is inside."""
+    lowered = {str(c).strip().lower() for c in columns}
+    return set(_RAW_COLUMN_MAP_LOWER).issubset(lowered)
 
 
 def _clean_currency(series: pd.Series) -> pd.Series:
@@ -68,14 +79,17 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     raises: every problem found is flagged in `issues`, not stopped on.
     """
     df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
     issues: list[dict] = []
 
     # Order_ID: the same ID on two different orders is a labeling problem,
     # not a real duplicate -- their business data differs, so both rows are
     # kept (dropping either would lose real revenue), just flagged so
-    # whoever owns the export knows to go fix the ID.
-    if "Order_ID" in df.columns:
-        dupe_ids = sorted(df.loc[df["Order_ID"].duplicated(keep=False), "Order_ID"].unique().tolist())
+    # whoever owns the export knows to go fix the ID. Matched
+    # case-insensitively, same as the rest of this function's columns.
+    order_id_col = next((c for c in df.columns if c.lower() == "order_id"), None)
+    if order_id_col:
+        dupe_ids = sorted(df.loc[df[order_id_col].duplicated(keep=False), order_id_col].astype(str).unique().tolist())
         if dupe_ids:
             issues.append({
                 "level": "warn",
@@ -87,9 +101,10 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                 ),
                 "count": len(dupe_ids),
             })
-        df = df.drop(columns=["Order_ID"])
+        df = df.drop(columns=[order_id_col])
 
-    df = df.rename(columns=RAW_COLUMN_MAP)
+    rename_map = {c: _RAW_COLUMN_MAP_LOWER[c.lower()] for c in df.columns if c.lower() in _RAW_COLUMN_MAP_LOWER}
+    df = df.rename(columns=rename_map)
 
     df["price"] = _clean_currency(df["price"])
     df["profit"] = _clean_currency(df["profit"])

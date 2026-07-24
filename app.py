@@ -74,13 +74,10 @@ if st.session_state.get("use_sample"):
 else:
     source_file, source_name = uploaded_file, uploaded_file.name
 
-# --- Run the file through the exact same pipeline the CLI uses -- a raw
-# .csv/.tsv export goes through process_raw_export_file() instead (different
-# columns/formatting, see scripts/clean_raw_export.py) ---
-if source_name.lower().endswith((".csv", ".tsv")):
-    df, file_issues, halt_msg = common.process_raw_export_file(source_file, source_name)
-else:
-    df, file_issues, halt_msg = common.process_file(source_file, source_name)
+# --- Run the file through the exact same pipeline the CLI uses --
+# process_file() figures out from the column headers whether this is a raw
+# export (see scripts/clean_raw_export.py) or the already-clean shape ---
+df, file_issues, halt_msg = common.process_file(source_file, source_name)
 
 if halt_msg:
     st.error(f"🚫 {halt_msg}")
