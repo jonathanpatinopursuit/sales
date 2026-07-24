@@ -114,7 +114,7 @@ def render_upload_page(error: str | None = None) -> str:
     <div class="line-row">
       <span class="label">UPLOAD FILE</span>
       <span class="leader"></span>
-      <input type="file" name="file" accept=".xlsx" required>
+      <input type="file" name="file" accept=".xlsx,.csv,.tsv" required>
     </div>
     <hr class="total-rule">
     <button class="total" type="submit">GENERATE REPORT</button>
@@ -175,7 +175,10 @@ def _build_report_from_data(data, issues, halts) -> str:
 def _generate_report_from_file(file_like, filename: str) -> str:
     """Shared by /generate (a real upload) and /sample (synthetic data) so
     both run through the exact same read/validate/analyze pipeline -- the
-    only difference is where the raw .xlsx bytes come from."""
+    only difference is where the raw bytes come from. common.process_file()
+    itself figures out from the file's column headers whether it's a raw
+    export (see clean_raw_export.py) or the already-clean shape, regardless
+    of whether it's .xlsx, .csv, or .tsv."""
     try:
         df, file_issues, halt_msg = common.process_file(file_like, filename)
     except Exception as e:
@@ -197,7 +200,7 @@ def index():
 def generate():
     file = request.files.get("file")
     if file is None or file.filename == "":
-        return render_upload_page(error="Choose a .xlsx file first.")
+        return render_upload_page(error="Choose a .xlsx, .csv, or .tsv file first.")
     return _generate_report_from_file(file, file.filename)
 
 

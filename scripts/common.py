@@ -7,13 +7,14 @@ import os
 
 import pandas as pd
 
+from clean_raw_export import clean_raw_export, looks_like_raw_export
 from validate_data import REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
 
 def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
-    patterns = ["*.xlsx", "*.xls"]
+    patterns = ["*.xlsx", "*.xls", "*.csv", "*.tsv"]
     files = []
     for pattern in patterns:
         files.extend(glob.glob(os.path.join(data_dir, pattern)))
@@ -25,21 +26,45 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
 EMPTY_COLUMNS = REQUIRED_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
 
 
-def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
-    """Run one Excel file through the full read/normalize/validate pipeline.
+def _read_upload(file, filename: str) -> pd.DataFrame:
+    if filename.lower().endswith((".csv", ".tsv")):
+        return pd.read_csv(file, sep=None, engine="python")
+    return pd.read_excel(file)
 
-    `file` can be a path (str) or any file-like object pandas.read_excel()
-    accepts (e.g. a Streamlit UploadedFile) -- this is the single place that
-    logic lives, so the CLI (load_data(), iterating files on disk) and the
-    Streamlit app (a single uploaded file) both go through exactly the same
-    checks rather than each re-implementing them.
+
+def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
+    """Run one uploaded sales file through the full read/normalize/validate
+    pipeline. `file` can be a path (str) or any file-like object (e.g. a
+    Streamlit UploadedFile or a Flask FileStorage) -- this is the single
+    place that logic lives, so the CLI, the Streamlit app, and the Flask
+    upload route all go through exactly the same checks.
+
+    Reads .xlsx/.xls directly, or .csv/.tsv with delimiter auto-detection.
+    Which schema the file is in -- the already-clean one, or a raw export
+    shaped like Order_ID/Order_Date/.../Profit (see clean_raw_export.py) --
+    is decided from its actual column headers, not its extension: a raw
+    export can be saved as .xlsx just as easily as .csv, so the extension
+    alone was never a reliable signal of which pipeline to run.
 
     Returns (df, issues, halt_message). If the file is rejected outright
     (missing column, too many bad dates), df is None and halt_message is
     set instead of issues being populated.
     """
-    df = pd.read_excel(file)
-    df.columns = [str(c).strip().lower() for c in df.columns]
+    try:
+        df = _read_upload(file, filename)
+    except Exception as e:
+        return None, [], f"'{filename}' couldn't be read: {e}"
+
+    df.columns = [str(c).strip() for c in df.columns]
+
+    if looks_like_raw_export(df.columns):
+        return _process_raw_export(df, filename)
+
+    df.columns = [c.lower() for c in df.columns]
+    return _process_clean(df, filename)
+
+
+def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         col_word = "column" if len(missing) == 1 else "columns"
@@ -76,6 +101,22 @@ def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], 
 
     df["__source_file"] = filename
     return df, file_issues, None
+
+
+def _process_raw_export(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
+    df, format_issues = clean_raw_export(df)
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for col in ("quantity", "price", "discount", "profit"):
+        df[col] = df[col].fillna(0)
+
+    try:
+        df, file_issues = validate(df, filename)
+    except ValueError as e:
+        return None, [], str(e)
+
+    df["__source_file"] = filename
+    return df, format_issues + file_issues, None
 
 
 def finalize_data(frames: list[pd.DataFrame], issues: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
