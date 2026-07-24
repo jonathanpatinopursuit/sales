@@ -101,7 +101,7 @@ def render_upload_page(error: str | None = None) -> str:
   </div>
   <hr class="divider">
   {error_html}
-  <p class="lede">Sales Organizer turns sales data into an easy report to read.</p>
+  <p class="lede">Turns sales data into an easy report to read.</p>
   <form method="POST" action="/generate" enctype="multipart/form-data">
     <div class="line-row">
       <span class="label">UPLOAD FILE</span>
