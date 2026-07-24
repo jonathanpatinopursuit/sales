@@ -37,11 +37,10 @@ from __future__ import annotations
 
 import pandas as pd
 
+# The only two things a "sales report" can't be built without: a number
+# (price) and a date to bucket it into a period. Everything else defaults.
 REQUIRED_COLUMNS = [
     "date",
-    "product",
-    "category",
-    "quantity",
     "price",
 ]
 
@@ -57,11 +56,17 @@ REQUIRED_COLUMNS = [
 # Downstream code sums it with sum(min_count=1) so an all-missing group stays
 # NaN ("not available") instead of pandas' default all-NaN-sums-to-0 sum(),
 # and every place that reads margin/profit already treats NaN as "n/a".
+#
+# `quantity` defaults to 1 -- a file with no quantity column (e.g. a
+# service business logging one row per appointment) is one unit per row.
 OPTIONAL_COLUMNS = {
     "customer": "Unknown",
     "region": "Unknown",
     "discount": 0.0,
     "profit": float("nan"),
+    "product": "Unknown",
+    "category": "Unknown",
+    "quantity": 1,
 }
 
 # Full business-column shape (required + optional) in a fixed order -- used
@@ -160,15 +165,17 @@ def validate(
                 "count": int(bad_region.sum()),
             })
 
-    # Check 5: blank/missing category -- kept, just flagged
-    bad_category = df["category"].astype(str).str.strip() == ""
-    tag_dq_flag(df, bad_category, "flagged:invalid_category")
-    if bad_category.any():
-        issues.append({
-            "level": "warn",
-            "message": f"{bad_category.sum()} row(s) have a blank/missing category in {filename}.",
-            "count": int(bad_category.sum()),
-        })
+    # Check 5: blank/missing category -- kept, just flagged.
+    # Skipped when the file never had a category column at all.
+    if "category" not in missing_optional:
+        bad_category = df["category"].astype(str).str.strip() == ""
+        tag_dq_flag(df, bad_category, "flagged:invalid_category")
+        if bad_category.any():
+            issues.append({
+                "level": "warn",
+                "message": f"{bad_category.sum()} row(s) have a blank/missing category in {filename}.",
+                "count": int(bad_category.sum()),
+            })
 
     # Check 5b: blank/missing customer -- kept, just flagged (same reasoning as region/category)
     if "customer" not in missing_optional:

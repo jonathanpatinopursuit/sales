@@ -60,19 +60,24 @@ def test_missing_column():
 
 
 def test_missing_optional_columns_ok():
-    """customer/region/discount are optional -- validate() itself still
+    """Everything in OPTIONAL_COLUMNS (customer/region/discount/profit/
+    product/category/quantity) is optional -- validate() itself still
     expects them present (common.py fills defaults before calling it), but
-    given missing_optional it should skip their per-row blank checks rather
-    than flagging every row for a column the file never had."""
+    given missing_optional it should skip their per-row blank/negative
+    checks rather than flagging every row for a column the file never had."""
     df = make_clean_df()
     for col, default in OPTIONAL_COLUMNS.items():
         df[col] = default
     result, issues = validate(df, "test_missing_optional", missing_optional=frozenset(OPTIONAL_COLUMNS))
     _check(len(result) == len(df), "no rows dropped", f"expected {len(df)} rows, got {len(result)}")
-    noisy = [i for i in issues if "missing region" in i["message"] or "missing customer" in i["message"]]
-    _check(not noisy, "no blank-region/customer noise for a column the file never had",
+    noisy = [
+        i for i in issues
+        if "missing region" in i["message"] or "missing customer" in i["message"]
+        or "missing category" in i["message"] or "negative profit" in i["message"]
+    ]
+    _check(not noisy, "no blank/negative noise for a column the file never had",
            f"unexpected issues: {noisy}")
-    _check(result["dq_flag"].isna().all(), "no rows tagged invalid_region/invalid_customer",
+    _check(result["dq_flag"].isna().all(), "no rows tagged invalid_region/invalid_customer/invalid_category/negative_profit",
            f"unexpectedly tagged: {result['dq_flag'].dropna().tolist()}")
 
 

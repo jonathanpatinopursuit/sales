@@ -49,11 +49,12 @@ if uploaded_file is not None and st.session_state.get("uploaded_name") != upload
 # from create_sample_data.sample_dataframe() instead of the file uploader.
 if uploaded_file is None:
     st.info(
-        "Drop a `.xlsx` file above to get started (columns: date, product, category, "
-        "quantity, price -- customer, region, discount, and profit are all optional), or "
-        "a raw `.csv`/`.tsv` export (columns: Order_Date, Customer_Name, Product, "
-        "Product_Category, Region, Units_Sold, Unit_Price, Discount_Pct, Profit) -- "
-        "currency/percent formatting and an Order_ID column are handled automatically."
+        "Drop a `.xlsx` file above to get started -- only date and price are required, "
+        "everything else (product, category, quantity, customer, region, discount, "
+        "profit) is optional and defaults if missing -- or a raw `.csv`/`.tsv` export "
+        "(columns: Order_Date, Customer_Name, Product, Product_Category, Region, "
+        "Units_Sold, Unit_Price, Discount_Pct, Profit) -- currency/percent formatting "
+        "and an Order_ID column are handled automatically."
     )
     if st.button("Don't have data? Generate a sample report", use_container_width=True):
         st.session_state["generated"] = True

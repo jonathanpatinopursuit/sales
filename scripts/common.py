@@ -33,6 +33,9 @@ EMPTY_COLUMNS = ALL_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", 
 CLEAN_COLUMN_ALIASES = {
     "product name": "product",
     "item name": "product",
+    "service provided": "product",
+    "service": "product",
+    "service name": "product",
     "unit price": "price",
 }
 
