@@ -60,6 +60,7 @@ DQ_LABEL_TEXT = {
     "clamped:discount": "discount was out of the valid 0-100% range and was corrected",
     "flagged:negative_profit": "negative profit on this row",
     "flagged:duplicate": "duplicate row",
+    "flagged:invalid_customer": "missing customer",
 }
 
 
@@ -138,6 +139,16 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
             "level": "warn",
             "message": f"{bad_category.sum()} row(s) have a blank/missing category in {filename}.",
             "count": int(bad_category.sum()),
+        })
+
+    # Check 5b: blank/missing customer -- kept, just flagged (same reasoning as region/category)
+    bad_customer = df["customer"].astype(str).str.strip() == ""
+    tag_dq_flag(df, bad_customer, "flagged:invalid_customer")
+    if bad_customer.any():
+        issues.append({
+            "level": "warn",
+            "message": f"{bad_customer.sum()} row(s) have a blank/missing customer in {filename}.",
+            "count": int(bad_customer.sum()),
         })
 
     # Check 6: discount outside 0-100% (post-normalization, so this really is bad data) -- clamped, kept

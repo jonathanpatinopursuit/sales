@@ -7,6 +7,7 @@ import os
 
 import pandas as pd
 
+from clean_raw_export import RAW_COLUMN_MAP, clean_raw_export
 from validate_data import REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -76,6 +77,47 @@ def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], 
 
     df["__source_file"] = filename
     return df, file_issues, None
+
+
+def process_raw_export_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
+    """Like process_file(), but for a raw CSV/TSV export shaped like
+    Order_ID/Order_Date/Region/.../Profit instead of an already-clean
+    .xlsx -- see clean_raw_export.py for the column mapping and the
+    formatting problems it fixes (currency/percent strings, double-dash
+    negatives, inconsistent capitalization, reused Order_IDs).
+
+    Returns the exact same (df, issues, halt_message) shape process_file()
+    does, so callers can treat a raw export upload identically to an .xlsx
+    upload once it's through this function -- both feed into
+    finalize_data() the same way.
+    """
+    df = pd.read_csv(file, sep=None, engine="python")
+    df.columns = [str(c).strip() for c in df.columns]
+
+    missing = [c for c in RAW_COLUMN_MAP if c not in df.columns]
+    if missing:
+        col_word = "column" if len(missing) == 1 else "columns"
+        return None, [], (
+            f"'{filename}' can't be used — it's missing the {col_word}: {', '.join(missing)}. "
+            f"Fix: open the file, add a header named exactly '{missing[0]}'"
+            + (f" (and: {', '.join(missing[1:])})" if len(missing) > 1 else "")
+            + f" with the right values in each row, then run the report again. "
+            f"Required columns: {', '.join(RAW_COLUMN_MAP)}."
+        )
+
+    df, format_issues = clean_raw_export(df)
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for col in ("quantity", "price", "discount", "profit"):
+        df[col] = df[col].fillna(0)
+
+    try:
+        df, file_issues = validate(df, filename)
+    except ValueError as e:
+        return None, [], str(e)
+
+    df["__source_file"] = filename
+    return df, format_issues + file_issues, None
 
 
 def finalize_data(frames: list[pd.DataFrame], issues: list[dict]) -> tuple[pd.DataFrame, list[dict]]:
