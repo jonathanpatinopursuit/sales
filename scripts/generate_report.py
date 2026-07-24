@@ -414,7 +414,6 @@ def render_html(summary_text, current_period, prior_period, generated_at,
     &nbsp;|&nbsp; Prior period: <strong>{prior_period if prior_period is not None else 'n/a'}</strong>
     &nbsp;|&nbsp; Generated {generated_at}</div>
 
-  {data_quality_html}
   <div class="summary">{summary_text}</div>
 
   <div class="stat-grid">{stat_tiles}</div>
@@ -450,6 +449,8 @@ def render_html(summary_text, current_period, prior_period, generated_at,
       {discount_table(discount_category_df)}
     </div>
   </details>
+
+  {data_quality_html}
 </div>
 </div>
 </body>

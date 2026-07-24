@@ -26,14 +26,6 @@ import generate_report
 
 app = Flask(__name__)
 
-LANDING_HTML = (
-    '<div class="summary" style="margin-bottom:20px;">'
-    '<strong>Sales Organizer</strong> turns a weekly sales export (.xlsx) into an instant report: '
-    'revenue and margin by category and region, biggest discounts by product, and automatic flags '
-    'for declining segments or thin margins.'
-    '</div>'
-)
-
 UPLOAD_PAGE_CSS = """
   /* A till-receipt aesthetic, on purpose: a sales report *is* the thing a
   receipt promises. Committed to one look (paper-light, monospace) rather
@@ -158,15 +150,13 @@ def _build_report_from_data(data, issues, halts) -> str:
         issues, halts,
     )
 
-    # Slot the intro card and a way back to the upload form in above the
-    # report, reusing the report's own ".summary" styling so it matches
-    # without adding any new CSS.
+    # Slot a way back to the upload form in above the report.
     anchor = '<div class="wrap">\n  <h1>Sales Organizer Report</h1>'
     back_link = '<p><a href="/">← Upload a different file</a></p>'
     if anchor in html:
         html = html.replace(
             anchor,
-            f'<div class="wrap">\n  {LANDING_HTML}\n  {back_link}\n  <h1>Sales Organizer Report</h1>',
+            f'<div class="wrap">\n  {back_link}\n  <h1>Sales Organizer Report</h1>',
             1,
         )
     return html
