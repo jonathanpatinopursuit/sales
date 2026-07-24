@@ -26,14 +26,6 @@ import generate_report
 
 app = Flask(__name__)
 
-LANDING_HTML = (
-    '<div class="summary" style="margin-bottom:20px;">'
-    '<strong>Sales Organizer</strong> turns a weekly sales export (.xlsx) into an instant report: '
-    'revenue and margin by category and region, biggest discounts by product, and automatic flags '
-    'for declining segments or thin margins.'
-    '</div>'
-)
-
 UPLOAD_PAGE_CSS = """
   /* A till-receipt aesthetic, on purpose: a sales report *is* the thing a
   receipt promises. Committed to one look (paper-light, monospace) rather
@@ -63,7 +55,10 @@ UPLOAD_PAGE_CSS = """
   .receipt .center { text-align: center; }
   .receipt .brand { font-size: 1.9rem; font-weight: 700; letter-spacing: 0.14em; margin: 0 0 18px; }
   .receipt .divider { border: none; border-top: 1px dashed #b9b9b2; margin: 26px 0; }
-  .receipt p.lede { font-size: 1.05rem; line-height: 1.7; margin: 0 0 26px; }
+  .receipt p.lede {
+    font-size: 0.92rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    line-height: 1.7; margin: 0 0 26px;
+  }
   .receipt .error-line { color: #a23c3c; font-size: 0.95rem; font-weight: 700; margin: 0 0 20px; }
   .receipt .line-row { display: flex; align-items: baseline; gap: 10px; font-size: 1.05rem; margin: 24px 0; }
   .receipt .line-row .label { white-space: nowrap; letter-spacing: 0.03em; }
@@ -109,7 +104,7 @@ def render_upload_page(error: str | None = None) -> str:
   </div>
   <hr class="divider">
   {error_html}
-  <p class="lede">Sales Organizer turns weekly sales data into a sales report.</p>
+  <p class="lede">Turns sales data into an easy report to read.</p>
   <form method="POST" action="/generate" enctype="multipart/form-data">
     <div class="line-row">
       <span class="label">UPLOAD FILE</span>
@@ -121,7 +116,7 @@ def render_upload_page(error: str | None = None) -> str:
   </form>
   <hr class="divider">
   <form method="POST" action="/sample">
-    <button class="total-secondary" type="submit">NO DATA? GENERATE SAMPLE REPORT</button>
+    <button class="total-secondary" type="submit">GENERATE SAMPLE REPORT</button>
   </form>
   <div class="barcode"></div>
   <p class="footer-note">KEEP THIS REPORT FOR YOUR RECORDS</p>
@@ -158,15 +153,13 @@ def _build_report_from_data(data, issues, halts) -> str:
         issues, halts,
     )
 
-    # Slot the intro card and a way back to the upload form in above the
-    # report, reusing the report's own ".summary" styling so it matches
-    # without adding any new CSS.
+    # Slot a way back to the upload form in above the report.
     anchor = '<div class="wrap">\n  <h1>Sales Organizer Report</h1>'
     back_link = '<p><a href="/">← Upload a different file</a></p>'
     if anchor in html:
         html = html.replace(
             anchor,
-            f'<div class="wrap">\n  {LANDING_HTML}\n  {back_link}\n  <h1>Sales Organizer Report</h1>',
+            f'<div class="wrap">\n  {back_link}\n  <h1>Sales Organizer Report</h1>',
             1,
         )
     return html
