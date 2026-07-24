@@ -55,7 +55,10 @@ UPLOAD_PAGE_CSS = """
   .receipt .center { text-align: center; }
   .receipt .brand { font-size: 1.9rem; font-weight: 700; letter-spacing: 0.14em; margin: 0 0 18px; }
   .receipt .divider { border: none; border-top: 1px dashed #b9b9b2; margin: 26px 0; }
-  .receipt p.lede { font-size: 1.05rem; line-height: 1.7; margin: 0 0 26px; }
+  .receipt p.lede {
+    font-size: 0.92rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    line-height: 1.7; margin: 0 0 26px;
+  }
   .receipt .error-line { color: #a23c3c; font-size: 0.95rem; font-weight: 700; margin: 0 0 20px; }
   .receipt .line-row { display: flex; align-items: baseline; gap: 10px; font-size: 1.05rem; margin: 24px 0; }
   .receipt .line-row .label { white-space: nowrap; letter-spacing: 0.03em; }
