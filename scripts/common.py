@@ -25,6 +25,17 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
 
 EMPTY_COLUMNS = ALL_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
 
+# Header aliases recognized for the "clean" format (matched case-insensitively,
+# only once a file has already failed to match the raw-export format) -- lets
+# a real-world export that uses slightly different header names (e.g. a POS
+# system's "Product Name" / "Unit Price" columns) load without the user
+# renaming headers first. Deliberately small; extend as new formats show up.
+CLEAN_COLUMN_ALIASES = {
+    "product name": "product",
+    "item name": "product",
+    "unit price": "price",
+}
+
 
 def _read_upload(file, filename: str) -> pd.DataFrame:
     if filename.lower().endswith((".csv", ".tsv")):
@@ -61,6 +72,10 @@ def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], 
         return _process_raw_export(df, filename)
 
     df.columns = [c.lower() for c in df.columns]
+    df = df.rename(columns={
+        c: CLEAN_COLUMN_ALIASES[c] for c in df.columns
+        if c in CLEAN_COLUMN_ALIASES and CLEAN_COLUMN_ALIASES[c] not in df.columns
+    })
     return _process_clean(df, filename)
 
 
@@ -87,8 +102,13 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
     df = df[ALL_COLUMNS].copy()
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    for col in ("quantity", "price", "discount", "profit"):
+    for col in ("quantity", "price", "discount"):
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    # profit is *not* fillna(0)'d like the others -- a blank/missing profit
+    # means unknown margin, not zero margin, and analysis.py's totals treat
+    # NaN accordingly (sum(min_count=1), "n/a" in tables) instead of that
+    # unknown silently reading as a real, very-low-margin number.
+    df["profit"] = pd.to_numeric(df["profit"], errors="coerce")
     # fillna("") first so a genuinely missing cell becomes "" rather than the
     # literal string "nan" that .astype(str) would otherwise produce -- needed
     # for validate()'s blank-region/category checks to work correctly.

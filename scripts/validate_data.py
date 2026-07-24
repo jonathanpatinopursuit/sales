@@ -43,7 +43,6 @@ REQUIRED_COLUMNS = [
     "category",
     "quantity",
     "price",
-    "profit",
 ]
 
 # Optional -- a file missing these still gets a full report. common.py fills
@@ -51,10 +50,18 @@ REQUIRED_COLUMNS = [
 # absent from the source entirely, and tells validate() which columns it
 # filled so the blank-value checks below don't fire on every single row for
 # data that was never tracked in the first place.
+#
+# `profit` defaults to NaN, not 0 -- a transaction log with no cost/profit
+# data (e.g. a raw POS export) has *unknown* margin, not zero margin. Zero
+# would make every product/category look like a margin-risk false positive.
+# Downstream code sums it with sum(min_count=1) so an all-missing group stays
+# NaN ("not available") instead of pandas' default all-NaN-sums-to-0 sum(),
+# and every place that reads margin/profit already treats NaN as "n/a".
 OPTIONAL_COLUMNS = {
     "customer": "Unknown",
     "region": "Unknown",
     "discount": 0.0,
+    "profit": float("nan"),
 }
 
 # Full business-column shape (required + optional) in a fixed order -- used
@@ -187,8 +194,10 @@ def validate(
 
     # Check 7: negative profit on a single row -- not necessarily wrong (could be a
     # real loss-leader or return), but worth surfacing since it can also be a
-    # data-entry error -- kept either way, just flagged
-    bad_profit = df["profit"] < 0
+    # data-entry error -- kept either way, just flagged. Skipped when the file
+    # never had a profit column at all (NaN < 0 is False anyway, but this makes
+    # the intent explicit rather than relying on that incidentally).
+    bad_profit = df["profit"] < 0 if "profit" not in missing_optional else pd.Series(False, index=df.index)
     tag_dq_flag(df, bad_profit, "flagged:negative_profit")
     if bad_profit.any():
         issues.append({

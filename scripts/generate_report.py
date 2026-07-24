@@ -276,14 +276,15 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 
     data_quality_html = render_dq_banner(issues, halts)
 
-    # Only the three headline numbers up top -- everything else (including a
-    # flags count) is either shown as its own section below or cut, so the
-    # first thing a user sees is three big numbers, not four competing tiles.
-    stat_tiles = "".join([
-        _stat_tile("Total Revenue", _fmt_money(total_revenue), revenue_change),
-        _stat_tile("Total Profit", _fmt_money(total_profit)),
-        _stat_tile("Overall Margin", f"{overall_margin:.1f}%"),
-    ])
+    # Only the headline numbers up top -- everything else (including a flags
+    # count) is either shown as its own section below or cut. Profit/margin
+    # tiles are omitted entirely (rather than showing $0 / 0%) when no file
+    # provided profit data -- see analysis.compute_headline_totals.
+    stat_tile_list = [_stat_tile("Total Revenue", _fmt_money(total_revenue), revenue_change)]
+    if overall_margin is not None:
+        stat_tile_list.append(_stat_tile("Total Profit", _fmt_money(total_profit)))
+        stat_tile_list.append(_stat_tile("Overall Margin", f"{overall_margin:.1f}%"))
+    stat_tiles = "".join(stat_tile_list)
 
     max_cat_rev = category_df["revenue"].max() if not category_df.empty else 0
     category_bars = "".join(_bar_row(r["category"], r["revenue"], max_cat_rev) for _, r in category_df.iterrows())
@@ -494,9 +495,7 @@ def main():
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
     )
 
-    total_revenue = current_df["revenue"].sum()
-    total_profit = current_df["profit"].sum()
-    overall_margin = (total_profit / total_revenue * 100) if total_revenue else 0
+    total_revenue, total_profit, overall_margin = analysis.compute_headline_totals(current_df)
     prior_revenue = prior_df["revenue"].sum() if not prior_df.empty else None
     revenue_change = common.pct_change(total_revenue, prior_revenue) if prior_revenue else None
 

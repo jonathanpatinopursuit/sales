@@ -63,8 +63,9 @@ of the four file types.
 ### 1. Clean format
 
 Case-insensitive column names, any column order, values already numeric.
-`customer`, `region`, and `discount` are optional — leave any of them out
-and the report still generates, using only the columns you actually have:
+`customer`, `region`, `discount`, and `profit` are all optional — leave any
+of them out and the report still generates, using only the columns you
+actually have:
 
 | column     | required? | description                                             |
 |------------|-----------|------------------------------------------------------------|
@@ -73,10 +74,10 @@ and the report still generates, using only the columns you actually have:
 | `category` | required  | product category                                        |
 | `quantity` | required  | units sold                                              |
 | `price`    | required  | unit price                                              |
-| `profit`   | required  | total profit for that line item                         |
 | `customer` | optional  | customer name — defaults to `"Unknown"` if the column isn't present |
 | `region`   | optional  | sales region — defaults to `"Unknown"` if the column isn't present (the region breakdown then shows one combined bucket instead of a per-region split) |
 | `discount` | optional  | discount rate applied (e.g. `0.1` for 10%, or `10`) — defaults to `0` (no discount) if the column isn't present |
+| `profit`   | optional  | total profit for that line item — if the column isn't present, profit and margin are left out of the report entirely (not shown as $0/0%, which would misread as a real, alarmingly bad number) |
 
 Revenue is derived as `quantity * price * (1 - discount)`. You don't need to
 compute revenue yourself.
@@ -85,6 +86,12 @@ This only applies to a column being missing entirely. If the column exists
 but is blank on some rows, that's still flagged as a data-quality issue (see
 [Data quality checks](#data-quality-checks)) rather than defaulted silently —
 missing data you didn't track is different from missing data you did.
+
+A few common header variants are also recognized automatically (case-insensitive),
+so you don't have to rename columns by hand: `Product Name`/`Item Name` →
+`product`, `Unit Price` → `price`. Extra columns your export has that aren't
+in the table above (an order ID, payment method, timestamp, etc.) are simply
+ignored.
 
 ### 2. Raw export format
 
@@ -127,13 +134,14 @@ Every file is validated on intake (`scripts/validate_data.py`) before it's used:
 | A row has a blank/missing customer, but the `customer` column exists | `flagged:invalid_customer` | **Kept**, just flagged |
 | A row has a blank/missing category | `flagged:invalid_category` | **Kept**, just flagged |
 | A discount is outside 0–100% | `clamped:discount` | **Clamped** to the nearest valid bound, row kept |
-| A row has negative profit | `flagged:negative_profit` | **Kept** — not necessarily wrong (could be a real loss), but worth surfacing |
+| A row has negative profit, but the `profit` column exists | `flagged:negative_profit` | **Kept** — not necessarily wrong (could be a real loss), but worth surfacing |
 | Duplicate rows (within a file, or the same export saved under two filenames) | `flagged:duplicate` | **Kept** — nothing is removed automatically, since legitimate repeat orders can look identical |
 
-The region/customer blank checks above only fire when that column exists in
-the file but is empty on some rows — a file that never had a `region` or
-`customer` column at all isn't flagged; see [Expected input file
-format](#expected-input-file-format) for how those columns default instead.
+The region/customer/profit checks above only fire when that column exists in
+the file but is empty (or negative, for profit) on some rows — a file that
+never had a `region`, `customer`, or `profit` column at all isn't flagged;
+see [Expected input file format](#expected-input-file-format) for how those
+columns default instead.
 
 Every row gets tagged with its own `dq_flag` (skipped rows are tagged before
 being dropped, purely so the check that dropped them can be tested in

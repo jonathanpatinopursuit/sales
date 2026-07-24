@@ -1,5 +1,5 @@
 """Cleaning for raw sales-export CSV/TSV files whose columns and formatting
-don't already match common.py's REQUIRED_COLUMNS shape -- unlike an .xlsx
+don't already match common.py's ALL_COLUMNS shape -- unlike an .xlsx
 export (numbers are already native numeric cells), a raw CSV/TSV export
 commonly has currency/percent formatting baked into strings, double-dash
 negatives, inconsistent capitalization, and an order-ID column not part of

@@ -44,13 +44,30 @@ def _attach_dq_notes(df: pd.DataFrame, source_df: pd.DataFrame, by: str) -> pd.D
     return df.merge(notes, on=by, how="left")
 
 
+def compute_headline_totals(current_df: pd.DataFrame):
+    """Total revenue/profit/margin for the current period. `total_profit` and
+    `overall_margin` come back as None when no row in current_df has a real
+    profit value (profit is optional -- see validate_data.OPTIONAL_COLUMNS),
+    so callers can hide profit/margin from a report instead of showing a
+    misleading $0 / 0%."""
+    total_revenue = current_df["revenue"].sum()
+    # min_count=1: an all-NaN "profit" column (never provided) sums to NaN,
+    # not pandas' default 0 for an empty/all-NaN sum -- that 0 would look
+    # like a real (and alarmingly bad) total rather than "not available".
+    total_profit = current_df["profit"].sum(min_count=1)
+    if pd.isna(total_profit):
+        return total_revenue, None, None
+    overall_margin = (total_profit / total_revenue * 100) if total_revenue else 0.0
+    return total_revenue, total_profit, overall_margin
+
+
 def grouped_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame, by: str) -> pd.DataFrame:
     def agg(df):
         if df.empty:
             return pd.DataFrame(columns=[by, "revenue", "profit", "quantity", "avg_discount"])
         g = df.groupby(by).agg(
             revenue=("revenue", "sum"),
-            profit=("profit", "sum"),
+            profit=("profit", lambda s: s.sum(min_count=1)),
             quantity=("quantity", "sum"),
             avg_discount=("discount", "mean"),
         ).reset_index()
@@ -87,7 +104,7 @@ def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_
     g = current_df.groupby(group_col).agg(
         avg_discount=("discount", "mean"),
         revenue=("revenue", "sum"),
-        profit=("profit", "sum"),
+        profit=("profit", lambda s: s.sum(min_count=1)),
     ).reset_index()
     g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
     g["margin_risk"] = (g["avg_discount"] >= HIGH_DISCOUNT_THRESHOLD) & (g["margin"] < LOW_MARGIN_THRESHOLD)
@@ -130,16 +147,20 @@ def generate_flags(category_df: pd.DataFrame, region_df: pd.DataFrame, product_d
 
 def build_summary_paragraph(current_df, prior_df, current_period, prior_period,
                              category_df, region_df, flags) -> str:
-    total_revenue = current_df["revenue"].sum()
-    total_profit = current_df["profit"].sum()
-    overall_margin = (total_profit / total_revenue * 100) if total_revenue else 0
+    total_revenue, total_profit, overall_margin = compute_headline_totals(current_df)
 
     period_label = str(current_period) if current_period is not None else "this period"
 
-    parts = [
-        f"In {period_label}, total sales revenue was ${total_revenue:,.0f} "
-        f"with ${total_profit:,.0f} in profit (a {overall_margin:.1f}% overall margin)."
-    ]
+    if overall_margin is not None:
+        parts = [
+            f"In {period_label}, total sales revenue was ${total_revenue:,.0f} "
+            f"with ${total_profit:,.0f} in profit (a {overall_margin:.1f}% overall margin)."
+        ]
+    else:
+        parts = [
+            f"In {period_label}, total sales revenue was ${total_revenue:,.0f}. "
+            f"No profit data was provided, so profit and margin aren't shown."
+        ]
 
     if prior_period is not None and not prior_df.empty:
         prior_revenue = prior_df["revenue"].sum()
