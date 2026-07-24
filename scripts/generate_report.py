@@ -414,9 +414,9 @@ def render_html(summary_text, current_period, prior_period, generated_at,
     &nbsp;|&nbsp; Prior period: <strong>{prior_period if prior_period is not None else 'n/a'}</strong>
     &nbsp;|&nbsp; Generated {generated_at}</div>
 
-  <div class="summary">{summary_text}</div>
-
   <div class="stat-grid">{stat_tiles}</div>
+
+  <div class="summary">{summary_text}</div>
 
   <h2>Flags</h2>
   {flags_html}
