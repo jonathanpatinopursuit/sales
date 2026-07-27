@@ -336,28 +336,6 @@ def render_html(summary_text, current_period, prior_period, generated_at,
     --dq-warn-bg: #fef9c3; --dq-warn-border: #ca8a04; --dq-warn-text: #713f12;
     --dq-skip-bg: #f3f4f6; --dq-skip-border: #6b7280; --dq-skip-text: #374151;
   }}
-  @media (prefers-color-scheme: dark) {{
-    :root:where(:not([data-theme="light"])) .viz-root {{
-      color-scheme: dark;
-      --surface-1: #1a1a19; --page: #0d0d0d; --text-primary: #ffffff;
-      --text-secondary: #c3c2b7; --text-muted: #898781; --gridline: #2c2c2a;
-      --border: rgba(255,255,255,0.10); --series-1: #3987e5;
-      --delta-good: #0ca30c; --delta-bad: #e66767;
-      --dq-halt-bg: rgba(220,38,38,0.16); --dq-halt-border: #e66767; --dq-halt-text: #ffb4b4;
-      --dq-warn-bg: rgba(202,138,4,0.18); --dq-warn-border: #fab219; --dq-warn-text: #ffdd8a;
-      --dq-skip-bg: rgba(255,255,255,0.06); --dq-skip-border: #898781; --dq-skip-text: #c3c2b7;
-    }}
-  }}
-  :root[data-theme="dark"] .viz-root {{
-    color-scheme: dark;
-    --surface-1: #1a1a19; --page: #0d0d0d; --text-primary: #ffffff;
-    --text-secondary: #c3c2b7; --text-muted: #898781; --gridline: #2c2c2a;
-    --border: rgba(255,255,255,0.10); --series-1: #3987e5;
-    --delta-good: #0ca30c; --delta-bad: #e66767;
-    --dq-halt-bg: rgba(220,38,38,0.16); --dq-halt-border: #e66767; --dq-halt-text: #ffb4b4;
-    --dq-warn-bg: rgba(202,138,4,0.18); --dq-warn-border: #fab219; --dq-warn-text: #ffdd8a;
-    --dq-skip-bg: rgba(255,255,255,0.06); --dq-skip-border: #898781; --dq-skip-text: #c3c2b7;
-  }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
           background: var(--page); color: var(--text-primary); }}
