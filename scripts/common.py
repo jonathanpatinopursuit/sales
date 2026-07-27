@@ -8,7 +8,7 @@ import os
 import pandas as pd
 
 from clean_raw_export import clean_raw_export, looks_like_raw_export
-from validate_data import REQUIRED_COLUMNS, tag_dq_flag, validate
+from validate_data import ALL_COLUMNS, OPTIONAL_COLUMNS, REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
@@ -23,7 +23,21 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
     return sorted(files)
 
 
-EMPTY_COLUMNS = REQUIRED_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
+EMPTY_COLUMNS = ALL_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
+
+# Header aliases recognized for the "clean" format (matched case-insensitively,
+# only once a file has already failed to match the raw-export format) -- lets
+# a real-world export that uses slightly different header names (e.g. a POS
+# system's "Product Name" / "Unit Price" columns) load without the user
+# renaming headers first. Deliberately small; extend as new formats show up.
+CLEAN_COLUMN_ALIASES = {
+    "product name": "product",
+    "item name": "product",
+    "service provided": "product",
+    "service": "product",
+    "service name": "product",
+    "unit price": "price",
+}
 
 
 def _read_upload(file, filename: str) -> pd.DataFrame:
@@ -61,6 +75,10 @@ def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], 
         return _process_raw_export(df, filename)
 
     df.columns = [c.lower() for c in df.columns]
+    df = df.rename(columns={
+        c: CLEAN_COLUMN_ALIASES[c] for c in df.columns
+        if c in CLEAN_COLUMN_ALIASES and CLEAN_COLUMN_ALIASES[c] not in df.columns
+    })
     return _process_clean(df, filename)
 
 
@@ -73,13 +91,27 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
             f"Fix: open the file, add a header named exactly '{missing[0]}'"
             + (f" (and: {', '.join(missing[1:])})" if len(missing) > 1 else "")
             + f" with the right values in each row, then run the report again. "
-            f"All required columns: {', '.join(REQUIRED_COLUMNS)}."
+            f"Required columns: {', '.join(REQUIRED_COLUMNS)}. "
+            f"Optional columns (the report still works without them): {', '.join(OPTIONAL_COLUMNS)}."
         )
-    df = df[REQUIRED_COLUMNS].copy()
+
+    # Optional columns the file doesn't have at all get a default rather than
+    # halting -- e.g. no `region` column means every row lands in one
+    # "Unknown" region bucket instead of the file being rejected.
+    missing_optional = {c for c in OPTIONAL_COLUMNS if c not in df.columns}
+    for col in missing_optional:
+        df[col] = OPTIONAL_COLUMNS[col]
+
+    df = df[ALL_COLUMNS].copy()
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    for col in ("quantity", "price", "discount", "profit"):
+    for col in ("quantity", "price", "discount"):
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    # profit is *not* fillna(0)'d like the others -- a blank/missing profit
+    # means unknown margin, not zero margin, and analysis.py's totals treat
+    # NaN accordingly (sum(min_count=1), "n/a" in tables) instead of that
+    # unknown silently reading as a real, very-low-margin number.
+    df["profit"] = pd.to_numeric(df["profit"], errors="coerce")
     # fillna("") first so a genuinely missing cell becomes "" rather than the
     # literal string "nan" that .astype(str) would otherwise produce -- needed
     # for validate()'s blank-region/category checks to work correctly.
@@ -95,7 +127,7 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
         df["discount"] = df["discount"].where(df["discount"] <= 1, df["discount"] / 100.0)
 
     try:
-        df, file_issues = validate(df, filename)
+        df, file_issues = validate(df, filename, missing_optional=frozenset(missing_optional))
     except ValueError as e:
         return None, [], str(e)
 
@@ -133,9 +165,9 @@ def finalize_data(frames: list[pd.DataFrame], issues: list[dict]) -> tuple[pd.Da
     # across files, in case the same export got saved under two filenames.
     # Compare only the business columns (not dq_flag), or two otherwise-identical
     # rows tagged differently by earlier checks would wrongly look distinct.
-    cross_file_dupe_mask = data.duplicated(subset=REQUIRED_COLUMNS, keep=False)
+    cross_file_dupe_mask = data.duplicated(subset=ALL_COLUMNS, keep=False)
     tag_dq_flag(data, cross_file_dupe_mask, "flagged:duplicate")
-    cross_file_dupes = int(data.duplicated(subset=REQUIRED_COLUMNS).sum())
+    cross_file_dupes = int(data.duplicated(subset=ALL_COLUMNS).sum())
     if cross_file_dupes:
         issues.append({
             "level": "warn",

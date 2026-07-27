@@ -37,17 +37,42 @@ from __future__ import annotations
 
 import pandas as pd
 
+# The only two things a "sales report" can't be built without: a number
+# (price) and a date to bucket it into a period. Everything else defaults.
 REQUIRED_COLUMNS = [
     "date",
-    "customer",
-    "product",
-    "category",
-    "region",
-    "quantity",
     "price",
-    "discount",
-    "profit",
 ]
+
+# Optional -- a file missing these still gets a full report. common.py fills
+# in the default (before validate() ever sees the row) when a column is
+# absent from the source entirely, and tells validate() which columns it
+# filled so the blank-value checks below don't fire on every single row for
+# data that was never tracked in the first place.
+#
+# `profit` defaults to NaN, not 0 -- a transaction log with no cost/profit
+# data (e.g. a raw POS export) has *unknown* margin, not zero margin. Zero
+# would make every product/category look like a margin-risk false positive.
+# Downstream code sums it with sum(min_count=1) so an all-missing group stays
+# NaN ("not available") instead of pandas' default all-NaN-sums-to-0 sum(),
+# and every place that reads margin/profit already treats NaN as "n/a".
+#
+# `quantity` defaults to 1 -- a file with no quantity column (e.g. a
+# service business logging one row per appointment) is one unit per row.
+OPTIONAL_COLUMNS = {
+    "customer": "Unknown",
+    "region": "Unknown",
+    "discount": 0.0,
+    "profit": float("nan"),
+    "product": "Unknown",
+    "category": "Unknown",
+    "quantity": 1,
+}
+
+# Full business-column shape (required + optional) in a fixed order -- used
+# wherever code needs "every column a row can carry" rather than "the
+# columns a file must have to be accepted" (de-duplication, reindexing).
+ALL_COLUMNS = ["date", "customer", "product", "category", "region", "quantity", "price", "discount", "profit"]
 
 DATE_HALT_THRESHOLD = 0.05  # halt the file if more than this fraction of dates are bad
 
@@ -81,7 +106,14 @@ def tag_dq_flag(df: pd.DataFrame, mask: pd.Series, label: str) -> None:
     df.loc[mask, "dq_flag"] = df.loc[mask, "dq_flag"].apply(_combine)
 
 
-def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, list[dict]]:
+def validate(
+    df: pd.DataFrame, filename: str = "input", missing_optional: frozenset[str] = frozenset()
+) -> tuple[pd.DataFrame, list[dict]]:
+    """`missing_optional` names OPTIONAL_COLUMNS that weren't in the source
+    file at all (common.py filled them with a default before calling this).
+    Their per-row blank-value checks are skipped -- every row would otherwise
+    "fail" the same check, which would just be noise for a column the file
+    never had, not a real data-quality problem."""
     # Check 1: missing required columns -- halts
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
@@ -121,35 +153,40 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
         })
         df = df[~bad_qty]
 
-    # Check 4: blank/missing region -- kept (dropping would lose real revenue), just flagged
-    bad_region = df["region"].astype(str).str.strip() == ""
-    tag_dq_flag(df, bad_region, "flagged:invalid_region")
-    if bad_region.any():
-        issues.append({
-            "level": "warn",
-            "message": f"{bad_region.sum()} row(s) have a blank/missing region in {filename}.",
-            "count": int(bad_region.sum()),
-        })
+    # Check 4: blank/missing region -- kept (dropping would lose real revenue), just flagged.
+    # Skipped when the file never had a region column at all (see missing_optional above).
+    if "region" not in missing_optional:
+        bad_region = df["region"].astype(str).str.strip() == ""
+        tag_dq_flag(df, bad_region, "flagged:invalid_region")
+        if bad_region.any():
+            issues.append({
+                "level": "warn",
+                "message": f"{bad_region.sum()} row(s) have a blank/missing region in {filename}.",
+                "count": int(bad_region.sum()),
+            })
 
-    # Check 5: blank/missing category -- kept, just flagged
-    bad_category = df["category"].astype(str).str.strip() == ""
-    tag_dq_flag(df, bad_category, "flagged:invalid_category")
-    if bad_category.any():
-        issues.append({
-            "level": "warn",
-            "message": f"{bad_category.sum()} row(s) have a blank/missing category in {filename}.",
-            "count": int(bad_category.sum()),
-        })
+    # Check 5: blank/missing category -- kept, just flagged.
+    # Skipped when the file never had a category column at all.
+    if "category" not in missing_optional:
+        bad_category = df["category"].astype(str).str.strip() == ""
+        tag_dq_flag(df, bad_category, "flagged:invalid_category")
+        if bad_category.any():
+            issues.append({
+                "level": "warn",
+                "message": f"{bad_category.sum()} row(s) have a blank/missing category in {filename}.",
+                "count": int(bad_category.sum()),
+            })
 
     # Check 5b: blank/missing customer -- kept, just flagged (same reasoning as region/category)
-    bad_customer = df["customer"].astype(str).str.strip() == ""
-    tag_dq_flag(df, bad_customer, "flagged:invalid_customer")
-    if bad_customer.any():
-        issues.append({
-            "level": "warn",
-            "message": f"{bad_customer.sum()} row(s) have a blank/missing customer in {filename}.",
-            "count": int(bad_customer.sum()),
-        })
+    if "customer" not in missing_optional:
+        bad_customer = df["customer"].astype(str).str.strip() == ""
+        tag_dq_flag(df, bad_customer, "flagged:invalid_customer")
+        if bad_customer.any():
+            issues.append({
+                "level": "warn",
+                "message": f"{bad_customer.sum()} row(s) have a blank/missing customer in {filename}.",
+                "count": int(bad_customer.sum()),
+            })
 
     # Check 6: discount outside 0-100% (post-normalization, so this really is bad data) -- clamped, kept
     bad_disc = (df["discount"] < 0) | (df["discount"] > 1)
@@ -164,8 +201,10 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
 
     # Check 7: negative profit on a single row -- not necessarily wrong (could be a
     # real loss-leader or return), but worth surfacing since it can also be a
-    # data-entry error -- kept either way, just flagged
-    bad_profit = df["profit"] < 0
+    # data-entry error -- kept either way, just flagged. Skipped when the file
+    # never had a profit column at all (NaN < 0 is False anyway, but this makes
+    # the intent explicit rather than relying on that incidentally).
+    bad_profit = df["profit"] < 0 if "profit" not in missing_optional else pd.Series(False, index=df.index)
     tag_dq_flag(df, bad_profit, "flagged:negative_profit")
     if bad_profit.any():
         issues.append({
@@ -178,9 +217,9 @@ def validate(df: pd.DataFrame, filename: str = "input") -> tuple[pd.DataFrame, l
     # look identical). Must run last, and compares only the business columns (not
     # dq_flag), or two otherwise-identical rows tagged differently by earlier checks
     # would wrongly look distinct.
-    dupe_mask = df.duplicated(subset=REQUIRED_COLUMNS, keep=False)
+    dupe_mask = df.duplicated(subset=ALL_COLUMNS, keep=False)
     tag_dq_flag(df, dupe_mask, "flagged:duplicate")
-    dupes = int(df.duplicated(subset=REQUIRED_COLUMNS).sum())
+    dupes = int(df.duplicated(subset=ALL_COLUMNS).sum())
     if dupes:
         issues.append({
             "level": "warn",

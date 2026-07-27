@@ -139,9 +139,7 @@ def _build_report_from_data(data, issues, halts) -> str:
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
     )
 
-    total_revenue = current_df["revenue"].sum()
-    total_profit = current_df["profit"].sum()
-    overall_margin = (total_profit / total_revenue * 100) if total_revenue else 0
+    total_revenue, total_profit, overall_margin = analysis.compute_headline_totals(current_df)
     prior_revenue = prior_df["revenue"].sum() if not prior_df.empty else None
     revenue_change = common.pct_change(total_revenue, prior_revenue) if prior_revenue else None
 

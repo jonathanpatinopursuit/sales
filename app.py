@@ -49,11 +49,12 @@ if uploaded_file is not None and st.session_state.get("uploaded_name") != upload
 # from create_sample_data.sample_dataframe() instead of the file uploader.
 if uploaded_file is None:
     st.info(
-        "Drop a `.xlsx` file above to get started (columns: date, customer, product, "
-        "category, region, quantity, price, discount, profit), or a raw `.csv`/`.tsv` "
-        "export (columns: Order_Date, Customer_Name, Product, Product_Category, Region, "
-        "Units_Sold, Unit_Price, Discount_Pct, Profit) -- currency/percent formatting and "
-        "an Order_ID column are handled automatically."
+        "Drop a `.xlsx` file above to get started -- only date and price are required, "
+        "everything else (product, category, quantity, customer, region, discount, "
+        "profit) is optional and defaults if missing -- or a raw `.csv`/`.tsv` export "
+        "(columns: Order_Date, Customer_Name, Product, Product_Category, Region, "
+        "Units_Sold, Unit_Price, Discount_Pct, Profit) -- currency/percent formatting "
+        "and an Order_ID column are handled automatically."
     )
     if st.button("Don't have data? Generate a sample report", use_container_width=True):
         st.session_state["generated"] = True
@@ -98,9 +99,7 @@ summary_text = analysis.build_summary_paragraph(
     current_df, prior_df, current_period, prior_period, category_df, region_df, flags
 )
 
-total_revenue = current_df["revenue"].sum()
-total_profit = current_df["profit"].sum()
-overall_margin = (total_profit / total_revenue * 100) if total_revenue else 0
+total_revenue, total_profit, overall_margin = analysis.compute_headline_totals(current_df)
 prior_revenue = prior_df["revenue"].sum() if not prior_df.empty else None
 revenue_change = common.pct_change(total_revenue, prior_revenue) if prior_revenue else None
 
