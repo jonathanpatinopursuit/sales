@@ -45,6 +45,7 @@ def make_clean_df(n: int = 25) -> pd.DataFrame:
         "discount": [0.1] * n,
         "profit": [100.0 + i for i in range(n)],
         "category": ["A" if i % 2 == 0 else "B" for i in range(n)],
+        "sub_category": ["A1" if i % 2 == 0 else "B1" for i in range(n)],
         "region": ["West" if i % 2 == 0 else "East" for i in range(n)],
         "product": ["P1" if i % 2 == 0 else "P2" for i in range(n)],
     })

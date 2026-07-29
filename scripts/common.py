@@ -7,7 +7,12 @@ import os
 
 import pandas as pd
 
-from clean_raw_export import clean_raw_export, looks_like_raw_export
+from clean_raw_export import (
+    clean_raw_export,
+    clean_superstore_export,
+    looks_like_raw_export,
+    looks_like_superstore_export,
+)
 from validate_data import ALL_COLUMNS, OPTIONAL_COLUMNS, REQUIRED_COLUMNS, tag_dq_flag, validate
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -37,12 +42,21 @@ CLEAN_COLUMN_ALIASES = {
     "service": "product",
     "service name": "product",
     "unit price": "price",
+    "sub-category": "sub_category",
+    "subcategory": "sub_category",
 }
 
 
 def _read_upload(file, filename: str) -> pd.DataFrame:
     if filename.lower().endswith((".csv", ".tsv")):
-        return pd.read_csv(file, sep=None, engine="python")
+        try:
+            return pd.read_csv(file, sep=None, engine="python")
+        except UnicodeDecodeError:
+            # Some real-world exports (e.g. the Sample Superstore dataset) are saved as
+            # Latin-1/cp1252, not UTF-8 -- retry once before giving up on the file.
+            if hasattr(file, "seek"):
+                file.seek(0)
+            return pd.read_csv(file, sep=None, engine="python", encoding="latin1")
     return pd.read_excel(file)
 
 
@@ -70,6 +84,9 @@ def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], 
         return None, [], f"'{filename}' couldn't be read: {e}"
 
     df.columns = [str(c).strip() for c in df.columns]
+
+    if looks_like_superstore_export(df.columns):
+        return _process_raw_export(df, filename, cleaner=clean_superstore_export)
 
     if looks_like_raw_export(df.columns):
         return _process_raw_export(df, filename)
@@ -135,8 +152,22 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
     return df, file_issues, None
 
 
-def _process_raw_export(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
-    df, format_issues = clean_raw_export(df)
+def _fill_missing_optional(df: pd.DataFrame) -> pd.DataFrame:
+    """Default any OPTIONAL_COLUMNS member a raw-export cleaner didn't produce
+    (e.g. sub_category, absent from the original Raw and clean formats) so
+    validate()'s ALL_COLUMNS-wide duplicate check always finds every column
+    it expects, regardless of which format a file came from."""
+    for col, default in OPTIONAL_COLUMNS.items():
+        if col not in df.columns:
+            df[col] = default
+    return df
+
+
+def _process_raw_export(
+    df: pd.DataFrame, filename: str, cleaner=clean_raw_export
+) -> tuple[pd.DataFrame | None, list[dict], str | None]:
+    df, format_issues = cleaner(df)
+    df = _fill_missing_optional(df)
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     for col in ("quantity", "price", "discount", "profit"):

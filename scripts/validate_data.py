@@ -66,13 +66,14 @@ OPTIONAL_COLUMNS = {
     "profit": float("nan"),
     "product": "Unknown",
     "category": "Unknown",
+    "sub_category": "Unknown",
     "quantity": 1,
 }
 
 # Full business-column shape (required + optional) in a fixed order -- used
 # wherever code needs "every column a row can carry" rather than "the
 # columns a file must have to be accepted" (de-duplication, reindexing).
-ALL_COLUMNS = ["date", "customer", "product", "category", "region", "quantity", "price", "discount", "profit"]
+ALL_COLUMNS = ["date", "customer", "product", "category", "sub_category", "region", "quantity", "price", "discount", "profit"]
 
 DATE_HALT_THRESHOLD = 0.05  # halt the file if more than this fraction of dates are bad
 

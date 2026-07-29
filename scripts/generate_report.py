@@ -47,7 +47,8 @@ COLOR_GOOD = "#0ca30c"
 # ---------------------------------------------------------------------------
 
 def write_excel(path, summary_text, current_period, prior_period,
-                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                 category_df, region_df, subcategory_df,
+                 discount_product_df, discount_category_df, discount_subcategory_df, flags_df,
                  issues=(), halts=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -156,10 +157,15 @@ def write_excel(path, summary_text, current_period, prior_period,
         write_table(region_df, "By Region", pct_cols=["pct_change"],
                     money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
                     flag_col="region")
+        write_table(subcategory_df, "By Sub-Category", pct_cols=["pct_change"],
+                    money_cols=["revenue", "profit", "prior_revenue"], plain_pct_cols=["margin", "avg_discount"],
+                    flag_col="sub_category")
         write_table(discount_product_df, "Discounts by Product", money_cols=["revenue", "profit"],
                     plain_pct_cols=["avg_discount", "margin"], flag_col="product")
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
                     plain_pct_cols=["avg_discount", "margin"], flag_col="category")
+        write_table(discount_subcategory_df, "Discounts by Sub-Category", money_cols=["revenue", "profit"],
+                    plain_pct_cols=["avg_discount", "margin"], flag_col="sub_category")
         write_table(flags_df, "Flags")
 
 
@@ -265,7 +271,8 @@ def render_dq_banner(issues=(), halts=()):
 
 
 def render_html(summary_text, current_period, prior_period, generated_at,
-                 category_df, region_df, discount_product_df, discount_category_df, flags,
+                 category_df, region_df, subcategory_df,
+                 discount_product_df, discount_category_df, discount_subcategory_df, flags,
                  total_revenue, total_profit, overall_margin, revenue_change,
                  issues=(), halts=()) -> str:
     """Build the full HTML report and return it as a string. write_html()
@@ -302,9 +309,17 @@ def render_html(summary_text, current_period, prior_period, generated_at,
         name_col="region", note_col="dq_note",
     )
 
-    def discount_table(df):
-        name_col = "product" if "product" in df.columns else "category"
+    subcategory_table = _df_to_table(
+        subcategory_df, ["sub_category", "revenue", "prior_revenue", "pct_change", "margin"],
+        ["Sub-Category", "Revenue", "Prior Revenue", "Change", "Margin"],
+        {
+            "revenue": _fmt_money, "prior_revenue": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
+            "pct_change": _delta_span, "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
+        },
+        name_col="sub_category", note_col="dq_note",
+    )
 
+    def discount_table(df, name_col):
         return _df_to_table(
             df, [name_col, "avg_discount", "revenue", "margin", "margin_risk"],
             ["Name", "Avg Discount", "Revenue", "Margin", "Risk"],
@@ -416,16 +431,30 @@ def render_html(summary_text, current_period, prior_period, generated_at,
   </details>
 
   <details class="section">
+    <summary>Revenue by Sub-Category</summary>
+    <div class="section-body">
+      {subcategory_table}
+    </div>
+  </details>
+
+  <details class="section">
     <summary>Biggest Discounts by Product</summary>
     <div class="section-body">
-      {discount_table(discount_product_df)}
+      {discount_table(discount_product_df, "product")}
     </div>
   </details>
 
   <details class="section">
     <summary>Biggest Discounts by Category</summary>
     <div class="section-body">
-      {discount_table(discount_category_df)}
+      {discount_table(discount_category_df, "category")}
+    </div>
+  </details>
+
+  <details class="section">
+    <summary>Biggest Discounts by Sub-Category</summary>
+    <div class="section-body">
+      {discount_table(discount_subcategory_df, "sub_category")}
     </div>
   </details>
 
@@ -439,13 +468,15 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 
 
 def write_html(path, summary_text, current_period, prior_period, generated_at,
-                category_df, region_df, discount_product_df, discount_category_df, flags,
+                category_df, region_df, subcategory_df,
+                discount_product_df, discount_category_df, discount_subcategory_df, flags,
                 total_revenue, total_profit, overall_margin, revenue_change,
                 issues=(), halts=()):
     """Render the HTML report and save it to `path` (used by the CLI)."""
     html = render_html(
         summary_text, current_period, prior_period, generated_at,
-        category_df, region_df, discount_product_df, discount_category_df, flags,
+        category_df, region_df, subcategory_df,
+        discount_product_df, discount_category_df, discount_subcategory_df, flags,
         total_revenue, total_profit, overall_margin, revenue_change,
         issues, halts,
     )
@@ -464,9 +495,11 @@ def main():
     category_df = analysis.category_summary(current_df, prior_df)
     region_df = analysis.region_summary(current_df, prior_df)
     product_df = analysis.product_summary(current_df, prior_df)
+    subcategory_df = analysis.sub_category_summary(current_df, prior_df)
     discount_product_df = analysis.discount_analysis(current_df, "product")
     discount_category_df = analysis.discount_analysis(current_df, "category")
-    flags = analysis.generate_flags(category_df, region_df, product_df)
+    discount_subcategory_df = analysis.discount_analysis(current_df, "sub_category")
+    flags = analysis.generate_flags(category_df, region_df, product_df, subcategory_df)
     flags_df = pd.DataFrame(flags) if flags else pd.DataFrame(columns=["dimension", "name", "reason", "severity"])
 
     summary_text = analysis.build_summary_paragraph(
@@ -482,12 +515,14 @@ def main():
     html_path = os.path.join(REPORTS_DIR, f"sales_report_{stamp}.html")
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
-                category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                category_df, region_df, subcategory_df,
+                discount_product_df, discount_category_df, discount_subcategory_df, flags_df,
                 issues, halts)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
-               category_df, region_df, discount_product_df, discount_category_df, flags,
+               category_df, region_df, subcategory_df,
+               discount_product_df, discount_category_df, discount_subcategory_df, flags,
                total_revenue, total_profit, overall_margin, revenue_change,
                issues, halts)
 

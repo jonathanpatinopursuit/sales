@@ -98,6 +98,10 @@ def product_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> pd.Data
     return grouped_summary(current_df, prior_df, "product")
 
 
+def sub_category_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> pd.DataFrame:
+    return grouped_summary(current_df, prior_df, "sub_category")
+
+
 def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_n: int = 10) -> pd.DataFrame:
     if current_df.empty:
         return pd.DataFrame(columns=[group_col, "avg_discount", "revenue", "profit", "margin", "margin_risk", "dq_note"])
@@ -112,7 +116,8 @@ def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_
     return g.sort_values("avg_discount", ascending=False).head(top_n).reset_index(drop=True)
 
 
-def generate_flags(category_df: pd.DataFrame, region_df: pd.DataFrame, product_df: pd.DataFrame) -> list[dict]:
+def generate_flags(category_df: pd.DataFrame, region_df: pd.DataFrame, product_df: pd.DataFrame,
+                    subcategory_df: pd.DataFrame | None = None) -> list[dict]:
     flags = []
 
     def scan(df, dim_label):
@@ -139,6 +144,8 @@ def generate_flags(category_df: pd.DataFrame, region_df: pd.DataFrame, product_d
     scan(category_df.rename(columns={"category": "category"}), "category")
     scan(region_df.rename(columns={"region": "region"}), "region")
     scan(product_df.rename(columns={"product": "product"}), "product")
+    if subcategory_df is not None:
+        scan(subcategory_df.rename(columns={"sub_category": "sub_category"}), "sub_category")
 
     severity_order = {"critical": 0, "warning": 1}
     flags.sort(key=lambda f: severity_order.get(f["severity"], 2))
