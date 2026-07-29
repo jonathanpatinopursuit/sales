@@ -206,3 +206,15 @@ def sample():
     create_sample_data.sample_dataframe().to_excel(buf, index=False)
     buf.seek(0)
     return _generate_report_from_file(buf, "sample_sales.xlsx")
+
+
+STATIC_REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static_reports")
+
+
+@app.route("/superstore-demo")
+def superstore_demo():
+    """Serves the pre-generated Plotly exploration of the Sample Superstore
+    dataset (region/product profit, discount-driven loss leaders) -- a
+    static export, not run through the report pipeline above."""
+    with open(os.path.join(STATIC_REPORTS_DIR, "superstore_report.html")) as f:
+        return f.read()
