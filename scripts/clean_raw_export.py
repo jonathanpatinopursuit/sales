@@ -125,13 +125,17 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     is_superstore = column_map is SUPERSTORE_COLUMN_MAP
     lower_map = _lower_map(column_map)
 
-    # Order_ID / Order ID: the same ID on two different orders is a labeling
-    # problem, not a real duplicate -- their business data differs, so both
-    # rows are kept (dropping either would lose real revenue), just flagged
-    # so whoever owns the export knows to go fix the ID. Matched
-    # case-insensitively (and space-or-underscore) same as the rest of this
-    # function's columns.
-    order_id_col = next((c for c in df.columns if c.lower().replace(" ", "_") == "order_id"), None)
+    # Order_ID: the same ID on two different orders is a labeling problem,
+    # not a real duplicate -- their business data differs, so both rows are
+    # kept (dropping either would lose real revenue), just flagged so
+    # whoever owns the export knows to go fix the ID. Matched
+    # case-insensitively, same as the rest of this function's columns.
+    #
+    # Not checked for the Superstore format: there, one Order ID legitimately
+    # spans multiple rows (one per line item in a multi-product order), so
+    # a repeated ID is normal, not a data-quality problem -- flagging it would
+    # be a false positive on nearly every multi-item order in the file.
+    order_id_col = None if is_superstore else next((c for c in df.columns if c.lower() == "order_id"), None)
     if order_id_col:
         dupe_ids = sorted(df.loc[df[order_id_col].duplicated(keep=False), order_id_col].astype(str).unique().tolist())
         if dupe_ids:
@@ -146,6 +150,10 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                 "count": len(dupe_ids),
             })
         df = df.drop(columns=[order_id_col])
+    elif is_superstore:
+        order_id_col = next((c for c in df.columns if c.lower() == "order id"), None)
+        if order_id_col:
+            df = df.drop(columns=[order_id_col])
 
     rename_map = {c: lower_map[c.lower()] for c in df.columns if c.lower() in lower_map}
     df = df.rename(columns=rename_map)

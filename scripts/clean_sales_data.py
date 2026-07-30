@@ -49,7 +49,13 @@ def main():
     args = parser.parse_args()
 
     try:
-        df = pd.read_csv(args.input)
+        try:
+            df = pd.read_csv(args.input, encoding="utf-8")
+        except UnicodeDecodeError:
+            # Not every CSV export is UTF-8 -- Excel on Windows commonly saves
+            # as cp1252 (e.g. the Tableau "Sample - Superstore" dataset), where
+            # bytes like 0xa0 (non-breaking space) are valid text, not garbage.
+            df = pd.read_csv(args.input, encoding="cp1252")
     except FileNotFoundError:
         sys.exit(f"'{args.input}' not found.")
 
