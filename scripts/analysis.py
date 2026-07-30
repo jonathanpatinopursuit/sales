@@ -202,6 +202,32 @@ def discount_band_summary(current_df: pd.DataFrame) -> pd.DataFrame:
     return g[cols]
 
 
+def discount_band_product_summary(current_df: pd.DataFrame) -> pd.DataFrame:
+    """Every product's discount-band breakdown -- same per-product metrics as
+    discount_analysis() (avg discount, revenue, profit, margin, margin-risk
+    flag), but grouped by (band, product) instead of product alone, so a
+    report can show exactly which products fall in each band. Returns every
+    product in every band (never capped) -- same reasoning as
+    discount_analysis(): a display layer decides how much to show at once,
+    this function never discards data."""
+    cols = ["band", "product", "avg_discount", "revenue", "profit", "margin", "margin_risk"]
+    if current_df.empty:
+        return pd.DataFrame(columns=cols)
+    df = current_df.copy()
+    df["band"] = df["discount"].apply(_discount_band)
+    g = df.groupby(["band", "product"]).agg(
+        avg_discount=("discount", "mean"),
+        revenue=("revenue", "sum"),
+        profit=("profit", lambda s: s.sum(min_count=1)),
+    ).reset_index()
+    g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
+    g["margin_risk"] = (g["avg_discount"] >= HIGH_DISCOUNT_THRESHOLD) & (g["margin"] < LOW_MARGIN_THRESHOLD)
+    g["band"] = pd.Categorical(g["band"], categories=DISCOUNT_BAND_ORDER, ordered=True)
+    g = g.sort_values(["band", "avg_discount"], ascending=[True, False]).reset_index(drop=True)
+    g["band"] = g["band"].astype(str)
+    return g[cols]
+
+
 def monthly_summary(data: pd.DataFrame) -> pd.DataFrame:
     """Revenue/profit/margin for every calendar month present in `data`,
     sorted chronologically -- lets a user look up any single month's totals
@@ -258,7 +284,13 @@ def product_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame) -> pd.Data
     return grouped_summary(current_df, prior_df, "product")
 
 
-def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_n: int = 10) -> pd.DataFrame:
+def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_n: int | None = None) -> pd.DataFrame:
+    """Every product/category with its average discount, revenue, profit,
+    and margin-risk flag, sorted biggest-discount-first. Returns all of them
+    by default (top_n=None) -- callers that only want to *display* a
+    top-N-at-a-glance view (e.g. generate_report.py's HTML report) slice the
+    returned dataframe themselves, so the full list is never discarded here
+    and stays available (e.g. for "show all" or the Excel workbook)."""
     if current_df.empty:
         return pd.DataFrame(columns=[group_col, "avg_discount", "revenue", "profit", "margin", "margin_risk", "dq_note"])
     g = current_df.groupby(group_col).agg(
@@ -269,7 +301,8 @@ def discount_analysis(current_df: pd.DataFrame, group_col: str = "product", top_
     g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
     g["margin_risk"] = (g["avg_discount"] >= HIGH_DISCOUNT_THRESHOLD) & (g["margin"] < LOW_MARGIN_THRESHOLD)
     g = _attach_dq_notes(g, current_df, group_col)
-    return g.sort_values("avg_discount", ascending=False).head(top_n).reset_index(drop=True)
+    g = g.sort_values("avg_discount", ascending=False).reset_index(drop=True)
+    return g.head(top_n) if top_n is not None else g
 
 
 def generate_flags(category_df: pd.DataFrame, region_df: pd.DataFrame, product_df: pd.DataFrame) -> list[dict]:

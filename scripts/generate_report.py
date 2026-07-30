@@ -48,7 +48,7 @@ COLOR_GOOD = "#0ca30c"
 
 def write_excel(path, summary_bullets, current_period, prior_period,
                  category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                 monthly_df, kpis, discount_band_df,
+                 monthly_df, kpis, discount_band_df, discount_band_product_df,
                  issues=(), halts=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -164,6 +164,8 @@ def write_excel(path, summary_bullets, current_period, prior_period,
                     plain_pct_cols=["avg_discount", "margin"], flag_col="category")
         write_table(discount_band_df, "Discount Bands", money_cols=["gross_sales", "discount_amount", "revenue", "profit", "avg_order_value"],
                     plain_pct_cols=["margin"])
+        write_table(discount_band_product_df, "Discount Bands by Product", money_cols=["revenue", "profit"],
+                    plain_pct_cols=["avg_discount", "margin"])
 
         # --- KPIs sheet -- one row per metric, its calculated value, and the
         # formula/definition behind it, so a reader can see the number and
@@ -346,7 +348,7 @@ def render_dq_banner(issues=(), halts=()):
 def render_html(summary_bullets, current_period, prior_period, generated_at,
                  category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                  total_revenue, total_profit, overall_margin, revenue_change,
-                 kpis, discount_band_df,
+                 kpis, discount_band_df, discount_band_product_df,
                  issues=(), halts=()) -> str:
     """Build the full HTML report and return it as a string. write_html()
     below is a thin wrapper that also saves it to disk -- this function is
@@ -399,6 +401,21 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
             name_col=name_col, note_col="dq_note",
         )
 
+    def discount_section(df, label, shown=10):
+        """Top `shown` by discount, plus a nested "Show all" expander with
+        every remaining one -- discount_analysis() no longer truncates the
+        data itself, so nothing here is ever unavailable, just collapsed
+        by default to keep the section scannable."""
+        top_table = discount_table(df.head(shown))
+        if len(df) <= shown:
+            return top_table
+        rest_table = discount_table(df.iloc[shown:])
+        return (
+            f"{top_table}"
+            f'<details class="subsection"><summary>Show all {len(df)} {label} '
+            f'(showing top {shown} above)</summary>{rest_table}</details>'
+        )
+
     flags_html = "".join(_flag_line(f) for f in flags) if flags else '<p class="muted">No flags raised this period.</p>'
 
     kpi_table = "<table><thead><tr><th>Metric</th><th>Value</th><th>Definition</th></tr></thead><tbody>" + "".join(
@@ -417,6 +434,21 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
             "avg_order_value": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
         },
     ) if not discount_band_df.empty else '<p class="muted">No data.</p>'
+
+    # Per-band product breakdown -- one nested "show all" expander per band
+    # (see discount_section above), so a reader can drill from "the >20%
+    # band lost us $X in margin" straight down to exactly which products
+    # are sitting in that band, not just the band's totals.
+    band_sections = []
+    for band in analysis.DISCOUNT_BAND_ORDER:
+        band_products = discount_band_product_df[discount_band_product_df["band"] == band]
+        if band_products.empty:
+            continue
+        band_sections.append(
+            f'<details class="subsection"><summary>{band} — {len(band_products)} product(s)</summary>'
+            f'{discount_section(band_products, "products", shown=10)}</details>'
+        )
+    discount_band_products_html = "".join(band_sections) if band_sections else '<p class="muted">No data.</p>'
 
     monthly_table = _df_to_table(
         monthly_df, ["period", "revenue", "profit", "margin"],
@@ -499,6 +531,13 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
   details.section summary::before {{ content: "▸  "; }}
   details.section[open] summary::before {{ content: "▾  "; }}
   details.section .section-body {{ padding: 4px 18px 18px; }}
+  details.subsection {{ margin: 14px 0 4px; border-top: 1px dashed var(--gridline); padding-top: 12px; }}
+  details.subsection summary {{ cursor: pointer; font-weight: 600; font-size: 0.88rem;
+                                 color: var(--text-secondary); list-style: none; }}
+  details.subsection summary::-webkit-details-marker {{ display: none; }}
+  details.subsection summary::before {{ content: "▸  "; }}
+  details.subsection[open] summary::before {{ content: "▾  "; }}
+  details.subsection table {{ margin-top: 10px; }}
 </style>
 </head>
 <body>
@@ -531,14 +570,14 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
   <details class="section">
     <summary>Biggest Discounts by Product</summary>
     <div class="section-body">
-      {discount_table(discount_product_df)}
+      {discount_section(discount_product_df, "products")}
     </div>
   </details>
 
   <details class="section">
     <summary>Biggest Discounts by Category</summary>
     <div class="section-body">
-      {discount_table(discount_category_df)}
+      {discount_section(discount_category_df, "categories")}
     </div>
   </details>
 
@@ -546,6 +585,7 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
     <summary>Discount Bands</summary>
     <div class="section-body">
       {discount_band_table}
+      {discount_band_products_html}
     </div>
   </details>
 
@@ -582,14 +622,14 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
 def write_html(path, summary_bullets, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                 total_revenue, total_profit, overall_margin, revenue_change,
-                kpis, discount_band_df,
+                kpis, discount_band_df, discount_band_product_df,
                 issues=(), halts=()):
     """Render the HTML report and save it to `path` (used by the CLI)."""
     html = render_html(
         summary_bullets, current_period, prior_period, generated_at,
         category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,
-        kpis, discount_band_df,
+        kpis, discount_band_df, discount_band_product_df,
         issues, halts,
     )
     with open(path, "w") as f:
@@ -614,6 +654,7 @@ def main():
     monthly_df = analysis.monthly_summary(data)
     kpis = analysis.compute_kpis(current_df, prior_df)
     discount_band_df = analysis.discount_band_summary(current_df)
+    discount_band_product_df = analysis.discount_band_product_summary(current_df)
 
     summary_bullets = analysis.build_summary_bullets(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
@@ -629,14 +670,14 @@ def main():
 
     write_excel(xlsx_path, summary_bullets, current_period, prior_period,
                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                monthly_df, kpis, discount_band_df,
+                monthly_df, kpis, discount_band_df, discount_band_product_df,
                 issues, halts)
 
     write_html(html_path, summary_bullets, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                total_revenue, total_profit, overall_margin, revenue_change,
-               kpis, discount_band_df,
+               kpis, discount_band_df, discount_band_product_df,
                issues, halts)
 
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))

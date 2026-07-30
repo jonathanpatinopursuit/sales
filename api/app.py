@@ -137,6 +137,7 @@ def _build_report_from_data(data, issues, halts) -> str:
     monthly_df = analysis.monthly_summary(data)
     kpis = analysis.compute_kpis(current_df, prior_df)
     discount_band_df = analysis.discount_band_summary(current_df)
+    discount_band_product_df = analysis.discount_band_product_summary(current_df)
 
     summary_bullets = analysis.build_summary_bullets(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
@@ -151,7 +152,7 @@ def _build_report_from_data(data, issues, halts) -> str:
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,
-        kpis, discount_band_df,
+        kpis, discount_band_df, discount_band_product_df,
         issues, halts,
     )
 
