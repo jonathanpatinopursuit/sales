@@ -11,23 +11,36 @@ existing scripts/validate_data.py:validate() (missing/blank fields, bad
 dates, negative profit, duplicates) can run unmodified afterward. Business
 rules live in exactly one place either way.
 
-Column mapping onto common.py's schema:
+Two raw layouts are recognized by header, matched case-insensitively:
+
+  "Underscore" format -- column mapping onto common.py's schema:
     Order_Date  -> date          Customer_Name    -> customer
     Product     -> product       Product_Category -> category
     Region      -> region        Units_Sold       -> quantity
     Unit_Price  -> price         Discount_Pct     -> discount
     Profit      -> profit
 
-Order_ID is *not* part of the report schema and is dropped after use --
-it exists here only to catch the same ID being reused across two
-different orders (e.g. a typo'd SO-10032 that should read SO-10033).
+  Tableau "Sample - Superstore" format -- same target schema, but there's
+  no unit-price column to map: `Sales` is already the line's total revenue
+  (quantity * unit price * (1 - discount)), not a per-unit price. `price`
+  is derived by inverting the report's own revenue formula:
+    price = Sales / (Quantity * (1 - Discount))
+    Order Date  -> date          Customer Name -> customer
+    Product Name -> product      Category      -> category
+    Region      -> region        Quantity      -> quantity
+    Discount    -> discount      Profit        -> profit
+    Sales       -> (used to derive price, then dropped)
+
+Order_ID / Order ID is *not* part of the report schema and is dropped
+after use -- it exists here only to catch the same ID being reused across
+two different orders (e.g. a typo'd SO-10032 that should read SO-10033).
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
-RAW_COLUMN_MAP = {
+UNDERSCORE_COLUMN_MAP = {
     "Order_Date": "date",
     "Customer_Name": "customer",
     "Product": "product",
@@ -38,17 +51,43 @@ RAW_COLUMN_MAP = {
     "Discount_Pct": "discount",
     "Profit": "profit",
 }
-_RAW_COLUMN_MAP_LOWER = {k.lower(): v for k, v in RAW_COLUMN_MAP.items()}
+
+SUPERSTORE_COLUMN_MAP = {
+    "Order Date": "date",
+    "Customer Name": "customer",
+    "Product Name": "product",
+    "Category": "category",
+    "Region": "region",
+    "Quantity": "quantity",
+    "Discount": "discount",
+    "Profit": "profit",
+    "Sales": "sales",
+}
+
+RAW_FORMATS = [UNDERSCORE_COLUMN_MAP, SUPERSTORE_COLUMN_MAP]
+
+
+def _lower_map(column_map: dict) -> dict:
+    return {k.lower(): v for k, v in column_map.items()}
+
+
+def _matching_format(columns) -> dict | None:
+    """Return whichever known raw-export column map has every column it
+    needs present in `columns` (matched case-insensitively), or None."""
+    lowered = {str(c).strip().lower() for c in columns}
+    for column_map in RAW_FORMATS:
+        if set(_lower_map(column_map)).issubset(lowered):
+            return column_map
+    return None
 
 
 def looks_like_raw_export(columns) -> bool:
-    """True if `columns` has every column this raw-export format needs,
-    matched case-insensitively -- used to decide which pipeline a file goes
-    through by its actual headers, not its file extension. A raw export can
-    be saved as .xlsx just as easily as .csv/.tsv, so the extension alone
-    isn't a reliable signal of which schema is inside."""
-    lowered = {str(c).strip().lower() for c in columns}
-    return set(_RAW_COLUMN_MAP_LOWER).issubset(lowered)
+    """True if `columns` matches a known raw-export format -- used to decide
+    which pipeline a file goes through by its actual headers, not its file
+    extension. A raw export can be saved as .xlsx just as easily as
+    .csv/.tsv, so the extension alone isn't a reliable signal of which
+    schema is inside."""
+    return _matching_format(columns) is not None
 
 
 def _clean_currency(series: pd.Series) -> pd.Series:
@@ -82,12 +121,17 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     df.columns = [str(c).strip() for c in df.columns]
     issues: list[dict] = []
 
-    # Order_ID: the same ID on two different orders is a labeling problem,
-    # not a real duplicate -- their business data differs, so both rows are
-    # kept (dropping either would lose real revenue), just flagged so
-    # whoever owns the export knows to go fix the ID. Matched
-    # case-insensitively, same as the rest of this function's columns.
-    order_id_col = next((c for c in df.columns if c.lower() == "order_id"), None)
+    column_map = _matching_format(df.columns)
+    is_superstore = column_map is SUPERSTORE_COLUMN_MAP
+    lower_map = _lower_map(column_map)
+
+    # Order_ID / Order ID: the same ID on two different orders is a labeling
+    # problem, not a real duplicate -- their business data differs, so both
+    # rows are kept (dropping either would lose real revenue), just flagged
+    # so whoever owns the export knows to go fix the ID. Matched
+    # case-insensitively (and space-or-underscore) same as the rest of this
+    # function's columns.
+    order_id_col = next((c for c in df.columns if c.lower().replace(" ", "_") == "order_id"), None)
     if order_id_col:
         dupe_ids = sorted(df.loc[df[order_id_col].duplicated(keep=False), order_id_col].astype(str).unique().tolist())
         if dupe_ids:
@@ -103,13 +147,23 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
             })
         df = df.drop(columns=[order_id_col])
 
-    rename_map = {c: _RAW_COLUMN_MAP_LOWER[c.lower()] for c in df.columns if c.lower() in _RAW_COLUMN_MAP_LOWER}
+    rename_map = {c: lower_map[c.lower()] for c in df.columns if c.lower() in lower_map}
     df = df.rename(columns=rename_map)
 
-    df["price"] = _clean_currency(df["price"])
     df["profit"] = _clean_currency(df["profit"])
-    df["discount"] = _clean_percent(df["discount"])
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce")
+
+    if is_superstore:
+        # Discount here is already a 0-1 rate (e.g. 0.2), not a "20%"
+        # string -- no percent-string parsing needed, just numeric coercion.
+        df["discount"] = pd.to_numeric(df["discount"], errors="coerce")
+        df["sales"] = _clean_currency(df["sales"])
+        denominator = (df["quantity"] * (1 - df["discount"])).replace(0, pd.NA)
+        df["price"] = df["sales"] / denominator
+        df = df.drop(columns=["sales"])
+    else:
+        df["price"] = _clean_currency(df["price"])
+        df["discount"] = _clean_percent(df["discount"])
 
     # Inconsistent capitalization ("electronics" vs "Electronics") would
     # otherwise split one real category into two groups downstream.

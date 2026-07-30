@@ -42,7 +42,15 @@ CLEAN_COLUMN_ALIASES = {
 
 def _read_upload(file, filename: str) -> pd.DataFrame:
     if filename.lower().endswith((".csv", ".tsv")):
-        return pd.read_csv(file, sep=None, engine="python")
+        try:
+            return pd.read_csv(file, sep=None, engine="python", encoding="utf-8")
+        except UnicodeDecodeError:
+            # Not every CSV export is UTF-8 -- Excel on Windows commonly saves
+            # as cp1252 (e.g. the Tableau "Sample - Superstore" dataset), where
+            # bytes like 0xa0 (non-breaking space) are valid text, not garbage.
+            if hasattr(file, "seek"):
+                file.seek(0)
+            return pd.read_csv(file, sep=None, engine="python", encoding="cp1252")
     return pd.read_excel(file)
 
 
