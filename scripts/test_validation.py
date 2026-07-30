@@ -47,6 +47,10 @@ def make_clean_df(n: int = 25) -> pd.DataFrame:
         "category": ["A" if i % 2 == 0 else "B" for i in range(n)],
         "region": ["West" if i % 2 == 0 else "East" for i in range(n)],
         "product": ["P1" if i % 2 == 0 else "P2" for i in range(n)],
+        # common.py always fills this in (default NaN) before calling
+        # validate(), same as every other OPTIONAL_COLUMNS entry -- included
+        # here so these direct validate() calls match that real shape.
+        "sales_target": [float("nan")] * n,
     })
 
 

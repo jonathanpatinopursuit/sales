@@ -67,12 +67,22 @@ OPTIONAL_COLUMNS = {
     "product": "Unknown",
     "category": "Unknown",
     "quantity": 1,
+    # No target in the source file is normal (most exports don't carry one) --
+    # NaN, not 0, so "Target Achievement %" reads as "not available" rather
+    # than a real (and alarmingly bad) 0% achievement.
+    "sales_target": float("nan"),
 }
 
 # Full business-column shape (required + optional) in a fixed order -- used
 # wherever code needs "every column a row can carry" rather than "the
 # columns a file must have to be accepted" (de-duplication, reindexing).
-ALL_COLUMNS = ["date", "customer", "product", "category", "region", "quantity", "price", "discount", "profit"]
+#
+# `order_id` is deliberately NOT included here -- common.py tracks it
+# separately (see _ensure_order_id) because, unlike these columns, its
+# per-row default must be a unique synthetic value, not one constant
+# broadcast to every row, and it must never affect duplicate-row detection
+# (two real duplicate line items can carry different synthetic order IDs).
+ALL_COLUMNS = ["date", "customer", "product", "category", "region", "quantity", "price", "discount", "profit", "sales_target"]
 
 DATE_HALT_THRESHOLD = 0.05  # halt the file if more than this fraction of dates are bad
 

@@ -48,7 +48,7 @@ COLOR_GOOD = "#0ca30c"
 
 def write_excel(path, summary_text, current_period, prior_period,
                  category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                 monthly_df,
+                 monthly_df, kpis, discount_band_df,
                  issues=(), halts=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -162,7 +162,24 @@ def write_excel(path, summary_text, current_period, prior_period,
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
                     plain_pct_cols=["avg_discount", "margin"], flag_col="category")
         write_table(monthly_df, "By Month", money_cols=["revenue", "profit"], plain_pct_cols=["margin"])
+        write_table(discount_band_df, "Discount Bands", money_cols=["gross_sales", "discount_amount", "revenue", "profit", "avg_order_value"],
+                    plain_pct_cols=["margin"])
         write_table(flags_df, "Flags")
+
+        # --- KPIs sheet -- one row per metric, its calculated value, and the
+        # formula/definition behind it, so a reader can see the number and
+        # how it was derived without leaving the workbook.
+        kpi_ws = workbook.add_worksheet("KPIs")
+        writer.sheets["KPIs"] = kpi_ws
+        kpi_ws.set_column("A:A", 26)
+        kpi_ws.set_column("B:B", 18)
+        kpi_ws.set_column("C:C", 60)
+        for col_num, h in enumerate(["Metric", "Value", "Definition"]):
+            kpi_ws.write(0, col_num, h, header_fmt)
+        for row_num, (label, value, definition) in enumerate(_kpi_rows(kpis), start=1):
+            kpi_ws.write(row_num, 0, label)
+            kpi_ws.write(row_num, 1, value)
+            kpi_ws.write(row_num, 2, definition)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +194,58 @@ def _fmt_pct(v, signed=True):
     if v is None or pd.isna(v):
         return "n/a"
     return f"{v:+.1f}%" if signed else f"{v:.1f}%"
+
+
+def _fmt_num(v):
+    if v is None or pd.isna(v):
+        return "n/a"
+    return f"{v:,.0f}"
+
+
+def _kpi_rows(kpis: dict) -> list[tuple[str, str, str]]:
+    """(label, formatted value, definition) for every analysis.compute_kpis()
+    metric, shared by the Excel KPIs sheet and the HTML KPI table so the two
+    never show different numbers or wording for the same metric. A metric
+    that needs a field the source data doesn't have (sales_target, a prior
+    period) shows "Not available from source data" / "n/a" rather than 0 --
+    compute_kpis() already returns None for those instead of a fabricated
+    number; this only decides how None is displayed."""
+    na = "Not available from source data"
+    return [
+        ("Gross Sales", _fmt_money(kpis["gross_sales"]) if kpis["gross_sales"] is not None else "n/a",
+         "Quantity x Price, summed"),
+        ("Discount Amount", _fmt_money(kpis["discount_amount"]) if kpis["discount_amount"] is not None else "n/a",
+         "Gross Sales x Discount %, summed"),
+        ("Net Sales", _fmt_money(kpis["net_sales"]), "Gross Sales - Discount Amount"),
+        ("Total Profit", _fmt_money(kpis["total_profit"]) if kpis["total_profit"] is not None else "n/a",
+         "Net Sales - Total Cost (from the profit column)"),
+        ("Profit Margin %", _fmt_pct(kpis["overall_margin"], signed=False) if kpis["overall_margin"] is not None else "n/a",
+         "Total Profit / Net Sales x 100"),
+        ("Distinct Orders", _fmt_num(kpis["num_orders"]), "Distinct count of Order ID"),
+        ("Units Sold", _fmt_num(kpis["units_sold"]), "Sum of Quantity"),
+        ("Average Order Value", _fmt_money(kpis["avg_order_value"]) if kpis["avg_order_value"] is not None else "n/a",
+         "Net Sales / distinct Orders"),
+        ("Average Selling Price", _fmt_money(kpis["avg_selling_price"]) if kpis["avg_selling_price"] is not None else "n/a",
+         "Net Sales / Units Sold"),
+        ("Discount Rate %", _fmt_pct(kpis["discount_rate"], signed=False) if kpis["discount_rate"] is not None else "n/a",
+         "Discount Amount / Gross Sales x 100"),
+        ("Profit per Order", _fmt_money(kpis["profit_per_order"]) if kpis["profit_per_order"] is not None else "n/a",
+         "Total Profit / distinct Orders"),
+        ("Distinct Customers", _fmt_num(kpis["distinct_customers"]) if kpis["distinct_customers"] is not None else "n/a",
+         "Distinct count of Customer"),
+        ("Sales Target", _fmt_money(kpis["sales_target"]) if kpis["sales_target"] is not None else na,
+         "Sum of the sales_target column (not in this source file unless provided)"),
+        ("Target Achievement %", _fmt_pct(kpis["target_achievement"], signed=False) if kpis["target_achievement"] is not None else na,
+         "Net Sales / Sales Target x 100"),
+        ("Sales Growth vs Prior Period", _fmt_pct(kpis["sales_growth"]) if kpis["sales_growth"] is not None else "n/a",
+         "(Current Net Sales - Prior Net Sales) / Prior Net Sales x 100"),
+        ("Profit Growth vs Prior Period", _fmt_pct(kpis["profit_growth"]) if kpis["profit_growth"] is not None else "n/a",
+         "(Current Total Profit - Prior Total Profit) / Prior Total Profit x 100"),
+        ("Negative-Profit Orders", _fmt_num(kpis["negative_profit_orders"]) if kpis["negative_profit_orders"] is not None else "n/a",
+         "Distinct orders whose summed profit is below 0"),
+        ("Discounted Orders", _fmt_num(kpis["discounted_orders"]) if kpis["discounted_orders"] is not None else "n/a",
+         "Distinct orders with a non-zero discount amount"),
+    ]
 
 
 def _delta_span(v):
@@ -275,6 +344,7 @@ def render_dq_banner(issues=(), halts=()):
 def render_html(summary_text, current_period, prior_period, generated_at,
                  category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                  total_revenue, total_profit, overall_margin, revenue_change,
+                 kpis, discount_band_df,
                  issues=(), halts=()) -> str:
     """Build the full HTML report and return it as a string. write_html()
     below is a thin wrapper that also saves it to disk -- this function is
@@ -326,6 +396,23 @@ def render_html(summary_text, current_period, prior_period, generated_at,
         )
 
     flags_html = "".join(_flag_line(f) for f in flags) if flags else '<p class="muted">No flags raised this period.</p>'
+
+    kpi_table = "<table><thead><tr><th>Metric</th><th>Value</th><th>Definition</th></tr></thead><tbody>" + "".join(
+        f"<tr><td>{label}</td><td>{value}</td><td>{definition}</td></tr>"
+        for label, value, definition in _kpi_rows(kpis)
+    ) + "</tbody></table>"
+
+    discount_band_table = _df_to_table(
+        discount_band_df, ["band", "orders", "gross_sales", "discount_amount", "revenue", "profit", "margin", "avg_order_value"],
+        ["Discount Band", "Orders", "Gross Sales", "Discount Amount", "Net Sales", "Profit", "Margin", "Avg Order Value"],
+        {
+            "orders": lambda v: f"{v:,.0f}",
+            "gross_sales": _fmt_money, "discount_amount": _fmt_money, "revenue": _fmt_money,
+            "profit": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
+            "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
+            "avg_order_value": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
+        },
+    ) if not discount_band_df.empty else '<p class="muted">No data.</p>'
 
     monthly_table = _df_to_table(
         monthly_df, ["period", "revenue", "profit", "margin"],
@@ -427,6 +514,20 @@ def render_html(summary_text, current_period, prior_period, generated_at,
     </div>
   </details>
 
+  <details class="section" open>
+    <summary>Order &amp; Discount KPIs</summary>
+    <div class="section-body">
+      {kpi_table}
+    </div>
+  </details>
+
+  <details class="section">
+    <summary>Discount Bands</summary>
+    <div class="section-body">
+      {discount_band_table}
+    </div>
+  </details>
+
   <details class="section">
     <summary>Sales by Month</summary>
     <div class="section-body">
@@ -475,12 +576,14 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 def write_html(path, summary_text, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                 total_revenue, total_profit, overall_margin, revenue_change,
+                kpis, discount_band_df,
                 issues=(), halts=()):
     """Render the HTML report and save it to `path` (used by the CLI)."""
     html = render_html(
         summary_text, current_period, prior_period, generated_at,
         category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,
+        kpis, discount_band_df,
         issues, halts,
     )
     with open(path, "w") as f:
@@ -503,6 +606,8 @@ def main():
     flags = analysis.generate_flags(category_df, region_df, product_df)
     flags_df = pd.DataFrame(flags) if flags else pd.DataFrame(columns=["dimension", "name", "reason", "severity"])
     monthly_df = analysis.monthly_summary(data)
+    kpis = analysis.compute_kpis(current_df, prior_df)
+    discount_band_df = analysis.discount_band_summary(current_df)
 
     summary_text = analysis.build_summary_paragraph(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
@@ -518,13 +623,14 @@ def main():
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
-                monthly_df,
+                monthly_df, kpis, discount_band_df,
                 issues, halts)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                total_revenue, total_profit, overall_margin, revenue_change,
+               kpis, discount_band_df,
                issues, halts)
 
     shutil.copyfile(xlsx_path, os.path.join(REPORTS_DIR, "latest.xlsx"))

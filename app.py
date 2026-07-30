@@ -95,6 +95,8 @@ discount_category_df = analysis.discount_analysis(current_df, "category")
 flags = analysis.generate_flags(category_df, region_df, product_df)
 flags_df = pd.DataFrame(flags) if flags else pd.DataFrame(columns=["dimension", "name", "reason", "severity"])
 monthly_df = analysis.monthly_summary(data)
+kpis = analysis.compute_kpis(current_df, prior_df)
+discount_band_df = analysis.discount_band_summary(current_df)
 
 summary_text = analysis.build_summary_paragraph(
     current_df, prior_df, current_period, prior_period, category_df, region_df, flags
@@ -111,6 +113,7 @@ report_html = generate_report.render_html(
     datetime.now().strftime("%Y-%m-%d %H:%M"),
     category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
     total_revenue, total_profit, overall_margin, revenue_change,
+    kpis, discount_band_df,
     issues, [],
 )
 
@@ -124,7 +127,7 @@ xlsx_buffer = io.BytesIO()
 generate_report.write_excel(
     xlsx_buffer, summary_text, current_period, prior_period,
     category_df, region_df, discount_product_df, discount_category_df, flags_df,
-    monthly_df,
+    monthly_df, kpis, discount_band_df,
     issues, [],
 )
 

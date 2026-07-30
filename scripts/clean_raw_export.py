@@ -31,9 +31,11 @@ Two raw layouts are recognized by header, matched case-insensitively:
     Discount    -> discount      Profit        -> profit
     Sales       -> (used to derive price, then dropped)
 
-Order_ID / Order ID is *not* part of the report schema and is dropped
-after use -- it exists here only to catch the same ID being reused across
-two different orders (e.g. a typo'd SO-10032 that should read SO-10033).
+Order_ID / Order ID is renamed to `order_id` and kept (not dropped) --
+besides catching the same ID being reused across two different orders
+(e.g. a typo'd SO-10032 that should read SO-10033), it's what lets
+downstream order-level KPIs (distinct order count, average order value,
+profit per order) roll multi-line orders up correctly.
 """
 
 from __future__ import annotations
@@ -135,6 +137,11 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     # spans multiple rows (one per line item in a multi-product order), so
     # a repeated ID is normal, not a data-quality problem -- flagging it would
     # be a false positive on nearly every multi-item order in the file.
+    #
+    # Either way the ID column itself is kept (renamed to order_id), not
+    # dropped -- it's what lets downstream KPIs (distinct order count, AOV,
+    # profit per order) roll multi-line orders up correctly instead of
+    # counting every line item as its own order.
     order_id_col = None if is_superstore else next((c for c in df.columns if c.lower() == "order_id"), None)
     if order_id_col:
         dupe_ids = sorted(df.loc[df[order_id_col].duplicated(keep=False), order_id_col].astype(str).unique().tolist())
@@ -149,11 +156,11 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
                 ),
                 "count": len(dupe_ids),
             })
-        df = df.drop(columns=[order_id_col])
+        df = df.rename(columns={order_id_col: "order_id"})
     elif is_superstore:
         order_id_col = next((c for c in df.columns if c.lower() == "order id"), None)
         if order_id_col:
-            df = df.drop(columns=[order_id_col])
+            df = df.rename(columns={order_id_col: "order_id"})
 
     rename_map = {c: lower_map[c.lower()] for c in df.columns if c.lower() in lower_map}
     df = df.rename(columns=rename_map)
@@ -181,4 +188,6 @@ def clean_raw_export(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
     df["product"] = df["product"].fillna("").astype(str).str.strip()
 
     keep_cols = ["date", "customer", "product", "category", "region", "quantity", "price", "discount", "profit"]
+    if "order_id" in df.columns:
+        keep_cols.append("order_id")
     return df[keep_cols], issues

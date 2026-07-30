@@ -23,7 +23,7 @@ def find_data_files(data_dir: str = DATA_DIR) -> list[str]:
     return sorted(files)
 
 
-EMPTY_COLUMNS = ALL_COLUMNS + ["dq_flag", "__source_file", "revenue", "margin", "period"]
+EMPTY_COLUMNS = ALL_COLUMNS + ["order_id", "dq_flag", "__source_file", "revenue", "gross_sales", "discount_amount", "margin", "period"]
 
 # Header aliases recognized for the "clean" format (matched case-insensitively,
 # only once a file has already failed to match the raw-export format) -- lets
@@ -37,6 +37,13 @@ CLEAN_COLUMN_ALIASES = {
     "service": "product",
     "service name": "product",
     "unit price": "price",
+    "order id": "order_id",
+    "order number": "order_id",
+    "order no": "order_id",
+    "invoice id": "order_id",
+    "invoice number": "order_id",
+    "sales target": "sales_target",
+    "target": "sales_target",
 }
 
 
@@ -52,6 +59,26 @@ def _read_upload(file, filename: str) -> pd.DataFrame:
                 file.seek(0)
             return pd.read_csv(file, sep=None, engine="python", encoding="cp1252")
     return pd.read_excel(file)
+
+
+def _ensure_order_id(df: pd.DataFrame, filename: str) -> pd.DataFrame:
+    """Guarantee every row has a non-blank `order_id`, without ever inventing
+    a *shared* one. A file with a real order/invoice ID column (see
+    CLEAN_COLUMN_ALIASES and clean_raw_export.py) keeps those values as-is,
+    so rows that are genuinely different line items of the same order still
+    roll up together for order-level KPIs (distinct order count, AOV, profit
+    per order). A file with no such column has no way to know which rows
+    belong to the same order, so each row is treated as its own one-line
+    order -- a synthetic per-row ID (not a shared constant), scoped to this
+    filename so two files can't collide."""
+    if "order_id" not in df.columns:
+        df["order_id"] = None
+    blank = df["order_id"].isna() | (df["order_id"].astype(str).str.strip().isin(["", "nan", "none"]))
+    if blank.any():
+        base = os.path.splitext(filename)[0]
+        df.loc[blank, "order_id"] = [f"{base}-row{i}" for i in df.index[blank]]
+    df["order_id"] = df["order_id"].astype(str).str.strip()
+    return df
 
 
 def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
@@ -80,14 +107,18 @@ def process_file(file, filename: str) -> tuple[pd.DataFrame | None, list[dict], 
     df.columns = [str(c).strip() for c in df.columns]
 
     if looks_like_raw_export(df.columns):
-        return _process_raw_export(df, filename)
+        result_df, issues, halt_msg = _process_raw_export(df, filename)
+    else:
+        df.columns = [c.lower() for c in df.columns]
+        df = df.rename(columns={
+            c: CLEAN_COLUMN_ALIASES[c] for c in df.columns
+            if c in CLEAN_COLUMN_ALIASES and CLEAN_COLUMN_ALIASES[c] not in df.columns
+        })
+        result_df, issues, halt_msg = _process_clean(df, filename)
 
-    df.columns = [c.lower() for c in df.columns]
-    df = df.rename(columns={
-        c: CLEAN_COLUMN_ALIASES[c] for c in df.columns
-        if c in CLEAN_COLUMN_ALIASES and CLEAN_COLUMN_ALIASES[c] not in df.columns
-    })
-    return _process_clean(df, filename)
+    if result_df is not None:
+        result_df = _ensure_order_id(result_df, filename)
+    return result_df, issues, halt_msg
 
 
 def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None, list[dict], str | None]:
@@ -110,7 +141,15 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
     for col in missing_optional:
         df[col] = OPTIONAL_COLUMNS[col]
 
+    # order_id isn't part of ALL_COLUMNS (see validate_data.ALL_COLUMNS) --
+    # save it off before reindexing to ALL_COLUMNS drops it, so a source
+    # file's real order/invoice ID column survives instead of being treated
+    # as untracked and synthesized later.
+    order_id = df["order_id"] if "order_id" in df.columns else None
+
     df = df[ALL_COLUMNS].copy()
+    if order_id is not None:
+        df["order_id"] = order_id.values
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     for col in ("quantity", "price", "discount"):
@@ -120,6 +159,10 @@ def _process_clean(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame | None
     # NaN accordingly (sum(min_count=1), "n/a" in tables) instead of that
     # unknown silently reading as a real, very-low-margin number.
     df["profit"] = pd.to_numeric(df["profit"], errors="coerce")
+    # sales_target: same reasoning as profit -- a blank/missing target means
+    # no target was set, not a target of zero, so "Target Achievement %"
+    # comes back "not available" rather than a real (and impossible) number.
+    df["sales_target"] = pd.to_numeric(df["sales_target"], errors="coerce")
     # fillna("") first so a genuinely missing cell becomes "" rather than the
     # literal string "nan" that .astype(str) would otherwise produce -- needed
     # for validate()'s blank-region/category checks to work correctly.
@@ -149,9 +192,15 @@ def _process_raw_export(df: pd.DataFrame, filename: str) -> tuple[pd.DataFrame |
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     for col in ("quantity", "price", "discount", "profit"):
         df[col] = df[col].fillna(0)
+    # None of the recognized raw-export layouts carry a sales-target column
+    # (see clean_raw_export.py) -- add it as all-missing rather than leaving
+    # it absent, so validate()'s duplicate check (subset=ALL_COLUMNS) has
+    # every column it expects, and downstream target-achievement math sees
+    # "not available" (NaN) instead of the column not existing at all.
+    df["sales_target"] = float("nan")
 
     try:
-        df, file_issues = validate(df, filename)
+        df, file_issues = validate(df, filename, missing_optional=frozenset({"sales_target"}))
     except ValueError as e:
         return None, [], str(e)
 
@@ -186,6 +235,13 @@ def finalize_data(frames: list[pd.DataFrame], issues: list[dict]) -> tuple[pd.Da
             "count": cross_file_dupes,
         })
 
+    # Gross Sales = Quantity x Price; Discount Amount = Gross Sales x Discount %;
+    # Net Sales = Gross Sales - Discount Amount. `revenue` (net sales) already
+    # equals quantity * price * (1 - discount) below, so it's left as-is and
+    # gross_sales/discount_amount are added alongside it rather than derived
+    # from it, keeping every existing caller of `revenue` unaffected.
+    data["gross_sales"] = data["quantity"] * data["price"]
+    data["discount_amount"] = data["gross_sales"] * data["discount"]
     data["revenue"] = data["quantity"] * data["price"] * (1 - data["discount"])
     data["margin"] = (data["profit"] / data["revenue"].replace(0, pd.NA)).astype(float)
     data["period"] = data["date"].dt.to_period("M")

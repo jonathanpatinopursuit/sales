@@ -46,6 +46,12 @@ Point it at one or more weekly exports and it will:
 - Surface which products/categories are being discounted the most, and whether
   that discounting is hurting profit margin
 - Automatically flag underperforming products, categories, or regions
+- Calculate order-level KPIs — gross sales, discount amount, net sales, distinct
+  orders, units sold, average order value, average selling price, discount rate,
+  profit per order, distinct customers, and (when a `sales_target` column is
+  provided) target achievement %
+- Break discounts down into bands (no discount, 0–5%, 5–10%, 10–20%, >20%) with
+  orders, sales, and margin for each
 - Write a short, auto-generated plain-language summary at the top of the report
 
 "Current period" and "prior period" are the two most recent calendar months
@@ -79,9 +85,17 @@ track:
 | `region`   | optional  | sales region — defaults to `"Unknown"` if the column isn't present (the region breakdown then shows one combined bucket instead of a per-region split) |
 | `discount` | optional  | discount rate applied (e.g. `0.1` for 10%, or `10`) — defaults to `0` (no discount) if the column isn't present |
 | `profit`   | optional  | total profit for that line item — if the column isn't present, profit and margin are left out of the report entirely (not shown as $0/0%, which would misread as a real, alarmingly bad number) |
+| `order_id` | optional  | order/invoice ID — line items sharing the same ID are treated as one order for order-level KPIs (see below). If the column isn't present, every row is its own one-line order |
+| `sales_target` | optional | a sales target for that row/period — if the column isn't present, Target Achievement % is left out of the report entirely (shown as "Not available from source data", not a fabricated number) |
 
-Revenue is derived as `quantity * price * (1 - discount)`. You don't need to
-compute revenue yourself.
+Revenue (net sales) is derived as `quantity * price * (1 - discount)`. You
+don't need to compute revenue, gross sales, or discount amount yourself —
+gross sales (`quantity * price`) and discount amount (`gross sales * discount`)
+are also derived automatically and shown in the **Order & Discount KPIs** and
+**Discount Bands** sections of the report, alongside order-level metrics
+(distinct orders, average order value, average selling price, discount rate,
+profit per order, target achievement, and period-over-period sales/profit
+growth).
 
 This only applies to a column being missing entirely. If the column exists
 but is blank on some rows, that's still flagged as a data-quality issue (see
@@ -90,9 +104,11 @@ missing data you didn't track is different from missing data you did.
 
 A few common header variants are also recognized automatically (case-insensitive),
 so you don't have to rename columns by hand: `Product Name`/`Item Name`/`Service
-Provided`/`Service`/`Service Name` → `product`, `Unit Price` → `price`. Extra
-columns your export has that aren't in the table above (an order ID, payment
-method, timestamp, stylist/rep name, etc.) are simply ignored.
+Provided`/`Service`/`Service Name` → `product`, `Unit Price` → `price`, `Order
+ID`/`Order Number`/`Order No`/`Invoice ID`/`Invoice Number` → `order_id`, `Sales
+Target`/`Target` → `sales_target`. Extra columns your export has that aren't in
+the table above or recognized as a variant (a payment method, timestamp,
+stylist/rep name, etc.) are simply ignored.
 
 ### 2. Raw export format
 
@@ -103,7 +119,7 @@ headers (case-insensitive):
 
 | raw column         | maps to    | cleaning applied                                          |
 |---------------------|------------|-------------------------------------------------------------|
-| `Order_ID`          | *(dropped)* | used only to flag a reused ID across two different orders, then discarded — not part of the report |
+| `Order_ID`          | `order_id` | kept — flags a reused ID across two different orders, and lets order-level KPIs (distinct orders, average order value, profit per order) roll up correctly |
 | `Order_Date`        | `date`     | —                                                             |
 | `Customer_Name`     | `customer` | —                                                             |
 | `Product`           | `product`  | —                                                             |
@@ -168,6 +184,11 @@ perfectly clean.
 Run `python3 scripts/test_validation.py` to exercise every check in
 isolation (halts, skips, clamps, flags, and a row hit by two checks at
 once) — it prints a ✅/❌ per assertion and exits non-zero on failure.
+
+Run `python3 scripts/test_calculations.py` the same way to verify the KPI
+formulas in `scripts/analysis.py` (gross/net sales, discount rate, average
+order value, profit per order, target achievement, discount bands, etc.)
+against hand-computed expected values.
 
 ## Adding new data
 
@@ -259,10 +280,11 @@ sales/
 ├── scripts/
 │   ├── common.py        loads & normalizes data/*.{xlsx,xls,csv,tsv}
 │   ├── clean_raw_export.py  detects & cleans the messy raw-export column layout
-│   ├── analysis.py       category/region/discount/flag calculations (shared)
+│   ├── analysis.py       category/region/discount/flag/KPI calculations (shared)
 │   ├── generate_report.py   builds the Excel + HTML report
 │   ├── validate_data.py     intake validation (bad dates, bad rows, discounts, dupes)
 │   ├── test_validation.py   test suite for validate_data.py
+│   ├── test_calculations.py test suite for analysis.py's KPI formulas
 │   └── create_sample_data.py  writes a synthetic two-month sample export
 ├── requirements.txt   (also read by Streamlit Community Cloud at deploy time)
 └── README.md

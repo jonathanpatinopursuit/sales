@@ -61,6 +61,147 @@ def compute_headline_totals(current_df: pd.DataFrame):
     return total_revenue, total_profit, overall_margin
 
 
+def compute_kpis(current_df: pd.DataFrame, prior_df: pd.DataFrame | None = None) -> dict:
+    """Order-, customer-, and target-level KPIs for the current period,
+    following the published calculation spec:
+
+        Gross Sales           = Quantity x Price
+        Discount Amount       = Gross Sales x Discount %
+        Net Sales             = Gross Sales - Discount Amount  (== `revenue`)
+        Average Order Value   = Net Sales / distinct orders
+        Average Selling Price = Net Sales / units sold
+        Discount Rate %       = Discount Amount / Gross Sales x 100
+        Profit per Order      = Total Profit / distinct orders
+        Target Achievement %  = Net Sales / Sales Target x 100
+        Sales/Profit Growth % = pct_change(current, prior)
+
+    A metric whose formula needs a field this dataset doesn't have (no
+    `order_id` column at all, no `sales_target`, no prior period) comes back
+    None rather than 0 or a fabricated number -- callers should render None
+    as "n/a" / "Not available from source data", never as a real value.
+    """
+    keys = (
+        "gross_sales", "discount_amount", "net_sales", "total_profit", "overall_margin",
+        "num_orders", "units_sold", "avg_order_value", "avg_selling_price", "discount_rate",
+        "profit_per_order", "distinct_customers", "sales_target", "target_achievement",
+        "sales_growth", "profit_growth", "negative_profit_orders", "discounted_orders",
+    )
+    if current_df.empty:
+        return {k: None for k in keys}
+
+    gross_sales = current_df["gross_sales"].sum()
+    discount_amount = current_df["discount_amount"].sum()
+    net_sales, total_profit, overall_margin = compute_headline_totals(current_df)
+
+    has_order_id = "order_id" in current_df.columns
+    num_orders = current_df["order_id"].nunique() if has_order_id else len(current_df)
+    units_sold = current_df["quantity"].sum()
+
+    avg_order_value = (net_sales / num_orders) if num_orders else None
+    avg_selling_price = (net_sales / units_sold) if units_sold else None
+    discount_rate = (discount_amount / gross_sales * 100) if gross_sales else None
+    profit_per_order = (total_profit / num_orders) if (total_profit is not None and num_orders) else None
+    distinct_customers = current_df["customer"].nunique() if "customer" in current_df.columns else None
+
+    sales_target = None
+    target_achievement = None
+    if "sales_target" in current_df.columns:
+        target_sum = current_df["sales_target"].sum(min_count=1)
+        if pd.notna(target_sum) and target_sum:
+            sales_target = target_sum
+            target_achievement = net_sales / target_sum * 100
+
+    sales_growth = None
+    profit_growth = None
+    if prior_df is not None and not prior_df.empty:
+        prior_net_sales = prior_df["revenue"].sum()
+        sales_growth = pct_change(net_sales, prior_net_sales)
+        if total_profit is not None:
+            prior_profit = prior_df["profit"].sum(min_count=1)
+            if pd.notna(prior_profit):
+                profit_growth = pct_change(total_profit, prior_profit)
+
+    negative_profit_orders = None
+    discounted_orders = None
+    if has_order_id:
+        if total_profit is not None:
+            by_order_profit = current_df.groupby("order_id")["profit"].sum(min_count=1)
+            negative_profit_orders = int((by_order_profit < 0).sum())
+        by_order_discount = current_df.groupby("order_id")["discount_amount"].sum()
+        discounted_orders = int((by_order_discount > 0).sum())
+
+    return {
+        "gross_sales": gross_sales,
+        "discount_amount": discount_amount,
+        "net_sales": net_sales,
+        "total_profit": total_profit,
+        "overall_margin": overall_margin,
+        "num_orders": num_orders,
+        "units_sold": units_sold,
+        "avg_order_value": avg_order_value,
+        "avg_selling_price": avg_selling_price,
+        "discount_rate": discount_rate,
+        "profit_per_order": profit_per_order,
+        "distinct_customers": distinct_customers,
+        "sales_target": sales_target,
+        "target_achievement": target_achievement,
+        "sales_growth": sales_growth,
+        "profit_growth": profit_growth,
+        "negative_profit_orders": negative_profit_orders,
+        "discounted_orders": discounted_orders,
+    }
+
+
+# Discount bands, in evaluation order -- (lower bound exclusive, upper bound
+# inclusive, label). A row with discount == 0 lands in "No discount" even
+# though 0 also satisfies "> 0.0 through 0.05"; _discount_band checks that
+# case first specifically so the two bands don't overlap.
+DISCOUNT_BAND_ORDER = ["No discount", "Above 0% through 5%", "Above 5% through 10%", "Above 10% through 20%", "Above 20%"]
+
+
+def _discount_band(discount: float) -> str:
+    if pd.isna(discount) or discount <= 0:
+        return "No discount"
+    if discount <= 0.05:
+        return "Above 0% through 5%"
+    if discount <= 0.10:
+        return "Above 5% through 10%"
+    if discount <= 0.20:
+        return "Above 10% through 20%"
+    return "Above 20%"
+
+
+def discount_band_summary(current_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-row discounts bucketed into bands (No discount / 0-5% / 5-10% /
+    10-20% / >20%), each with distinct orders, gross sales, discount amount,
+    net sales, profit, margin, and average order value -- lets a "how much
+    are steep discounts actually costing us" question be answered directly
+    instead of only per-product/per-category."""
+    cols = ["band", "orders", "gross_sales", "discount_amount", "revenue", "profit", "margin", "avg_order_value"]
+    if current_df.empty:
+        return pd.DataFrame(columns=cols)
+
+    df = current_df.copy()
+    df["band"] = df["discount"].apply(_discount_band)
+    has_order_id = "order_id" in df.columns
+
+    agg = {
+        "gross_sales": ("gross_sales", "sum"),
+        "discount_amount": ("discount_amount", "sum"),
+        "revenue": ("revenue", "sum"),
+        "profit": ("profit", lambda s: s.sum(min_count=1)),
+    }
+    g = df.groupby("band").agg(**agg).reset_index()
+    g["orders"] = df.groupby("band")["order_id"].nunique().values if has_order_id else df.groupby("band").size().values
+    g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
+    g["avg_order_value"] = (g["revenue"] / g["orders"].replace(0, pd.NA)).astype(float)
+
+    g["band"] = pd.Categorical(g["band"], categories=DISCOUNT_BAND_ORDER, ordered=True)
+    g = g.sort_values("band").reset_index(drop=True)
+    g["band"] = g["band"].astype(str)
+    return g[cols]
+
+
 def monthly_summary(data: pd.DataFrame) -> pd.DataFrame:
     """Revenue/profit/margin for every calendar month present in `data`,
     sorted chronologically -- lets a user look up any single month's totals
