@@ -162,10 +162,8 @@ def write_excel(path, summary_bullets, current_period, prior_period,
                     plain_pct_cols=["avg_discount", "margin"], flag_col="product")
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
                     plain_pct_cols=["avg_discount", "margin"], flag_col="category")
-        write_table(monthly_df, "By Month", money_cols=["revenue", "profit"], plain_pct_cols=["margin"])
         write_table(discount_band_df, "Discount Bands", money_cols=["gross_sales", "discount_amount", "revenue", "profit", "avg_order_value"],
                     plain_pct_cols=["margin"])
-        write_table(flags_df, "Flags")
 
         # --- KPIs sheet -- one row per metric, its calculated value, and the
         # formula/definition behind it, so a reader can see the number and
@@ -181,6 +179,9 @@ def write_excel(path, summary_bullets, current_period, prior_period,
             kpi_ws.write(row_num, 0, label)
             kpi_ws.write(row_num, 1, value)
             kpi_ws.write(row_num, 2, definition)
+
+        write_table(monthly_df, "By Month", money_cols=["revenue", "profit"], plain_pct_cols=["margin"])
+        write_table(flags_df, "Flags")
 
 
 # ---------------------------------------------------------------------------
@@ -513,34 +514,6 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
   <ul class="summary">{summary_html}</ul>
 
   <details class="section">
-    <summary>Flags{f" ({len(flags)})" if flags else ""}</summary>
-    <div class="section-body">
-      {flags_html}
-    </div>
-  </details>
-
-  <details class="section" open>
-    <summary>Order &amp; Discount KPIs</summary>
-    <div class="section-body">
-      {kpi_table}
-    </div>
-  </details>
-
-  <details class="section">
-    <summary>Discount Bands</summary>
-    <div class="section-body">
-      {discount_band_table}
-    </div>
-  </details>
-
-  <details class="section">
-    <summary>Sales by Month</summary>
-    <div class="section-body">
-      {monthly_table}
-    </div>
-  </details>
-
-  <details class="section">
     <summary>Revenue by Category</summary>
     <div class="section-body">
       {category_bars if category_bars else '<p class="muted">No data.</p>'}
@@ -566,6 +539,34 @@ def render_html(summary_bullets, current_period, prior_period, generated_at,
     <summary>Biggest Discounts by Category</summary>
     <div class="section-body">
       {discount_table(discount_category_df)}
+    </div>
+  </details>
+
+  <details class="section">
+    <summary>Discount Bands</summary>
+    <div class="section-body">
+      {discount_band_table}
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary>Order &amp; Discount KPIs</summary>
+    <div class="section-body">
+      {kpi_table}
+    </div>
+  </details>
+
+  <details class="section">
+    <summary>Sales by Month</summary>
+    <div class="section-body">
+      {monthly_table}
+    </div>
+  </details>
+
+  <details class="section">
+    <summary>Flags{f" ({len(flags)})" if flags else ""}</summary>
+    <div class="section-body">
+      {flags_html}
     </div>
   </details>
 
