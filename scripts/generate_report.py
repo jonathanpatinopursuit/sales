@@ -48,6 +48,7 @@ COLOR_GOOD = "#0ca30c"
 
 def write_excel(path, summary_text, current_period, prior_period,
                  category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                 monthly_df,
                  issues=(), halts=()):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         workbook = writer.book
@@ -160,6 +161,7 @@ def write_excel(path, summary_text, current_period, prior_period,
                     plain_pct_cols=["avg_discount", "margin"], flag_col="product")
         write_table(discount_category_df, "Discounts by Category", money_cols=["revenue", "profit"],
                     plain_pct_cols=["avg_discount", "margin"], flag_col="category")
+        write_table(monthly_df, "By Month", money_cols=["revenue", "profit"], plain_pct_cols=["margin"])
         write_table(flags_df, "Flags")
 
 
@@ -254,8 +256,14 @@ def render_dq_banner(issues=(), halts=()):
     for h in halts:
         rows.append(f'<div class="dq-halt">🚫 <strong>HALT:</strong> {h}</div>')
     if warn_issues:
-        summary = "; ".join(w["message"] for w in warn_issues)
-        rows.append(f'<div class="dq-warn">⚠️ <strong>{len(warn_issues)} warning(s)</strong> — {summary}</div>')
+        # A dropdown, not one run-on semicolon-joined line -- a file with
+        # several warnings (negative profit, duplicates, etc.) is easier to
+        # scan as a list you can expand than as one long sentence.
+        items_html = "".join(f'<div class="dq-warn-item">{w["message"]}</div>' for w in warn_issues)
+        rows.append(
+            f'<details class="dq-warn"><summary>⚠️ <strong>{len(warn_issues)} warning(s)</strong></summary>'
+            f'<div class="dq-warn-body">{items_html}</div></details>'
+        )
     if skip_issues:
         total_skipped = sum(s["count"] for s in skip_issues)
         summary = "; ".join(s["message"] for s in skip_issues)
@@ -265,7 +273,7 @@ def render_dq_banner(issues=(), halts=()):
 
 
 def render_html(summary_text, current_period, prior_period, generated_at,
-                 category_df, region_df, discount_product_df, discount_category_df, flags,
+                 category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                  total_revenue, total_profit, overall_margin, revenue_change,
                  issues=(), halts=()) -> str:
     """Build the full HTML report and return it as a string. write_html()
@@ -319,6 +327,16 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 
     flags_html = "".join(_flag_line(f) for f in flags) if flags else '<p class="muted">No flags raised this period.</p>'
 
+    monthly_table = _df_to_table(
+        monthly_df, ["period", "revenue", "profit", "margin"],
+        ["Month", "Revenue", "Profit", "Margin"],
+        {
+            "revenue": _fmt_money,
+            "profit": lambda v: _fmt_money(v) if pd.notna(v) else "n/a",
+            "margin": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "n/a",
+        },
+    ) if not monthly_df.empty else '<p class="muted">No data.</p>'
+
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -345,13 +363,18 @@ def render_html(summary_text, current_period, prior_period, generated_at,
   .summary {{ background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
               padding: 18px 20px; line-height: 1.55; margin-bottom: 28px; }}
   #dq-banner {{ margin-bottom: 28px; }}
-  .dq-halt, .dq-warn, .dq-skip {{ border-radius: 8px; padding: 10px 16px; margin-bottom: 6px; font-size: 0.88rem; }}
+  .dq-halt, .dq-skip {{ border-radius: 8px; padding: 10px 16px; margin-bottom: 6px; font-size: 0.88rem; }}
   .dq-halt {{ background: var(--dq-halt-bg); border-left: 4px solid var(--dq-halt-border); color: var(--dq-halt-text); }}
-  .dq-warn {{ background: var(--dq-warn-bg); border-left: 4px solid var(--dq-warn-border); color: var(--dq-warn-text); }}
   .dq-skip {{ background: var(--dq-skip-bg); border-left: 4px solid var(--dq-skip-border); color: var(--dq-skip-text); }}
+  details.dq-warn {{ border-radius: 8px; margin-bottom: 6px; font-size: 0.88rem; overflow: hidden;
+                      background: var(--dq-warn-bg); border-left: 4px solid var(--dq-warn-border); color: var(--dq-warn-text); }}
+  details.dq-warn summary {{ cursor: pointer; padding: 10px 16px; list-style: none; }}
+  details.dq-warn summary::-webkit-details-marker {{ display: none; }}
+  details.dq-warn summary::before {{ content: "▸  "; }}
+  details.dq-warn[open] summary::before {{ content: "▾  "; }}
+  details.dq-warn .dq-warn-body {{ padding: 0 16px 10px; }}
+  .dq-warn-item {{ padding: 3px 0; }}
   .dq-flag {{ cursor: help; color: var(--status-warning); font-size: 0.85em; margin-left: 4px; }}
-  h2 {{ font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em;
-        color: var(--text-secondary); margin: 36px 0 12px; }}
   .stat-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }}
   .stat-tile {{ background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }}
   .stat-label {{ color: var(--text-secondary); font-size: 0.85rem; text-transform: uppercase; letter-spacing: .03em; }}
@@ -397,8 +420,19 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 
   <div class="summary">{summary_text}</div>
 
-  <h2>Flags</h2>
-  {flags_html}
+  <details class="section">
+    <summary>Flags{f" ({len(flags)})" if flags else ""}</summary>
+    <div class="section-body">
+      {flags_html}
+    </div>
+  </details>
+
+  <details class="section">
+    <summary>Sales by Month</summary>
+    <div class="section-body">
+      {monthly_table}
+    </div>
+  </details>
 
   <details class="section">
     <summary>Revenue by Category</summary>
@@ -439,13 +473,13 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 
 
 def write_html(path, summary_text, current_period, prior_period, generated_at,
-                category_df, region_df, discount_product_df, discount_category_df, flags,
+                category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                 total_revenue, total_profit, overall_margin, revenue_change,
                 issues=(), halts=()):
     """Render the HTML report and save it to `path` (used by the CLI)."""
     html = render_html(
         summary_text, current_period, prior_period, generated_at,
-        category_df, region_df, discount_product_df, discount_category_df, flags,
+        category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,
         issues, halts,
     )
@@ -468,6 +502,7 @@ def main():
     discount_category_df = analysis.discount_analysis(current_df, "category")
     flags = analysis.generate_flags(category_df, region_df, product_df)
     flags_df = pd.DataFrame(flags) if flags else pd.DataFrame(columns=["dimension", "name", "reason", "severity"])
+    monthly_df = analysis.monthly_summary(data)
 
     summary_text = analysis.build_summary_paragraph(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
@@ -483,11 +518,12 @@ def main():
 
     write_excel(xlsx_path, summary_text, current_period, prior_period,
                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
+                monthly_df,
                 issues, halts)
 
     write_html(html_path, summary_text, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
-               category_df, region_df, discount_product_df, discount_category_df, flags,
+               category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                total_revenue, total_profit, overall_margin, revenue_change,
                issues, halts)
 

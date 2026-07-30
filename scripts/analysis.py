@@ -61,6 +61,25 @@ def compute_headline_totals(current_df: pd.DataFrame):
     return total_revenue, total_profit, overall_margin
 
 
+def monthly_summary(data: pd.DataFrame) -> pd.DataFrame:
+    """Revenue/profit/margin for every calendar month present in `data`,
+    sorted chronologically -- lets a user look up any single month's totals
+    (e.g. January) directly, not just the two most recent periods the rest
+    of the report compares against each other. `data` should be the full,
+    unsplit dataset (before common.split_periods()), so every month shows up
+    here even though only the latest two ever become current/prior."""
+    if data.empty:
+        return pd.DataFrame(columns=["period", "revenue", "profit", "margin"])
+    g = data.groupby("period").agg(
+        revenue=("revenue", "sum"),
+        profit=("profit", lambda s: s.sum(min_count=1)),
+    ).reset_index()
+    g = g.sort_values("period")
+    g["margin"] = (g["profit"] / g["revenue"].replace(0, pd.NA)).astype(float)
+    g["period"] = g["period"].astype(str)
+    return g.reset_index(drop=True)
+
+
 def grouped_summary(current_df: pd.DataFrame, prior_df: pd.DataFrame, by: str) -> pd.DataFrame:
     def agg(df):
         if df.empty:

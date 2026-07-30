@@ -134,6 +134,7 @@ def _build_report_from_data(data, issues, halts) -> str:
     discount_product_df = analysis.discount_analysis(current_df, "product")
     discount_category_df = analysis.discount_analysis(current_df, "category")
     flags = analysis.generate_flags(category_df, region_df, product_df)
+    monthly_df = analysis.monthly_summary(data)
 
     summary_text = analysis.build_summary_paragraph(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
@@ -146,7 +147,7 @@ def _build_report_from_data(data, issues, halts) -> str:
     html = generate_report.render_html(
         summary_text, current_period, prior_period,
         datetime.now().strftime("%Y-%m-%d %H:%M"),
-        category_df, region_df, discount_product_df, discount_category_df, flags,
+        category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,
         issues, halts,
     )
