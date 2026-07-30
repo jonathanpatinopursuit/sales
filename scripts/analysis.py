@@ -305,19 +305,22 @@ def generate_flags(category_df: pd.DataFrame, region_df: pd.DataFrame, product_d
     return flags
 
 
-def build_summary_paragraph(current_df, prior_df, current_period, prior_period,
-                             category_df, region_df, flags) -> str:
+def build_summary_bullets(current_df, prior_df, current_period, prior_period,
+                           category_df, region_df, flags) -> list[str]:
+    """One short, standalone sentence per bullet -- callers render this as a
+    list (HTML <ul>, or "• "-prefixed lines in Excel), not a run-on paragraph,
+    so the headline findings can be scanned at a glance."""
     total_revenue, total_profit, overall_margin = compute_headline_totals(current_df)
 
     period_label = str(current_period) if current_period is not None else "this period"
 
     if overall_margin is not None:
-        parts = [
+        bullets = [
             f"In {period_label}, total sales revenue was ${total_revenue:,.0f} "
             f"with ${total_profit:,.0f} in profit (a {overall_margin:.1f}% overall margin)."
         ]
     else:
-        parts = [
+        bullets = [
             f"In {period_label}, total sales revenue was ${total_revenue:,.0f}. "
             f"No profit data was provided, so profit and margin aren't shown."
         ]
@@ -326,30 +329,30 @@ def build_summary_paragraph(current_df, prior_df, current_period, prior_period,
         prior_revenue = prior_df["revenue"].sum()
         change = pct_change(total_revenue, prior_revenue)
         if change is not None:
-            direction = "up" if change >= 0 else "down"
-            parts.append(f"That's {direction} {abs(change):.1f}% versus {prior_period} (${prior_revenue:,.0f}).")
+            direction = "Up" if change >= 0 else "Down"
+            bullets.append(f"{direction} {abs(change):.1f}% versus {prior_period} (${prior_revenue:,.0f}).")
     else:
-        parts.append("No prior period was found in the data yet, so period-over-period comparisons aren't available.")
+        bullets.append("No prior period was found in the data yet, so period-over-period comparisons aren't available.")
 
     if not category_df.empty:
         top_cat = category_df.iloc[0]
-        parts.append(f"{top_cat['category']} was the top category by revenue (${top_cat['revenue']:,.0f}).")
+        bullets.append(f"{top_cat['category']} was the top category by revenue (${top_cat['revenue']:,.0f}).")
 
     if len(region_df) > 1 and region_df["pct_change"].notna().any():
         worst = region_df.dropna(subset=["pct_change"]).sort_values("pct_change").iloc[0]
         best = region_df.dropna(subset=["pct_change"]).sort_values("pct_change").iloc[-1]
         if worst["pct_change"] < 0:
-            parts.append(f"{worst['region']} was the weakest region ({worst['pct_change']:.1f}%), "
-                         f"while {best['region']} led growth ({best['pct_change']:+.1f}%).")
+            bullets.append(f"{worst['region']} was the weakest region ({worst['pct_change']:.1f}%), "
+                           f"while {best['region']} led growth ({best['pct_change']:+.1f}%).")
 
     n_critical = sum(1 for f in flags if f["severity"] == "critical")
     n_warning = sum(1 for f in flags if f["severity"] == "warning")
     if n_critical or n_warning:
-        parts.append(f"{n_critical} critical and {n_warning} warning flag(s) were raised below — see Flags for detail.")
+        bullets.append(f"{n_critical} critical and {n_warning} warning flag(s) were raised below — see Flags for detail.")
     else:
-        parts.append("No critical issues were flagged this period.")
+        bullets.append("No critical issues were flagged this period.")
 
-    return " ".join(parts)
+    return bullets
 
 
 def analyze_sales(df: pd.DataFrame):

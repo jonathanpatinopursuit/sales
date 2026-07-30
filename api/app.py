@@ -138,7 +138,7 @@ def _build_report_from_data(data, issues, halts) -> str:
     kpis = analysis.compute_kpis(current_df, prior_df)
     discount_band_df = analysis.discount_band_summary(current_df)
 
-    summary_text = analysis.build_summary_paragraph(
+    summary_bullets = analysis.build_summary_bullets(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
     )
 
@@ -147,7 +147,7 @@ def _build_report_from_data(data, issues, halts) -> str:
     revenue_change = common.pct_change(total_revenue, prior_revenue) if prior_revenue else None
 
     html = generate_report.render_html(
-        summary_text, current_period, prior_period,
+        summary_bullets, current_period, prior_period,
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,

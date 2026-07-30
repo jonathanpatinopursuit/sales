@@ -98,7 +98,7 @@ monthly_df = analysis.monthly_summary(data)
 kpis = analysis.compute_kpis(current_df, prior_df)
 discount_band_df = analysis.discount_band_summary(current_df)
 
-summary_text = analysis.build_summary_paragraph(
+summary_bullets = analysis.build_summary_bullets(
     current_df, prior_df, current_period, prior_period, category_df, region_df, flags
 )
 
@@ -109,7 +109,7 @@ revenue_change = common.pct_change(total_revenue, prior_revenue) if prior_revenu
 # --- Render the exact same report the CLI writes to reports/latest.html ---
 # (no halts to show here -- a halted file already stopped above -- so pass [])
 report_html = generate_report.render_html(
-    summary_text, current_period, prior_period,
+    summary_bullets, current_period, prior_period,
     datetime.now().strftime("%Y-%m-%d %H:%M"),
     category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
     total_revenue, total_profit, overall_margin, revenue_change,
@@ -125,7 +125,7 @@ components.html(report_html, height=900, scrolling=True)
 # --- Downloads, using the same write_excel()/render_html() the CLI uses ---
 xlsx_buffer = io.BytesIO()
 generate_report.write_excel(
-    xlsx_buffer, summary_text, current_period, prior_period,
+    xlsx_buffer, summary_bullets, current_period, prior_period,
     category_df, region_df, discount_product_df, discount_category_df, flags_df,
     monthly_df, kpis, discount_band_df,
     issues, [],

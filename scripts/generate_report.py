@@ -46,7 +46,7 @@ COLOR_GOOD = "#0ca30c"
 # Excel workbook
 # ---------------------------------------------------------------------------
 
-def write_excel(path, summary_text, current_period, prior_period,
+def write_excel(path, summary_bullets, current_period, prior_period,
                  category_df, region_df, discount_product_df, discount_category_df, flags_df,
                  monthly_df, kpis, discount_band_df,
                  issues=(), halts=()):
@@ -107,8 +107,9 @@ def write_excel(path, summary_text, current_period, prior_period,
             ws.set_row(next_row + 1, 16 * len(skip_issues) + 10)
             next_row += 2
 
+        summary_text = "\n".join(f"• {b}" for b in summary_bullets)
         ws.write(next_row, 0, summary_text, wrap_fmt)
-        ws.set_row(next_row, 60)
+        ws.set_row(next_row, 18 * len(summary_bullets) + 12)
         next_row += 1
 
         def write_table(df, sheet_name, pct_cols=(), money_cols=(), plain_pct_cols=(), flag_col=None):
@@ -341,7 +342,7 @@ def render_dq_banner(issues=(), halts=()):
     return f'<div id="dq-banner">{"".join(rows)}</div>'
 
 
-def render_html(summary_text, current_period, prior_period, generated_at,
+def render_html(summary_bullets, current_period, prior_period, generated_at,
                  category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                  total_revenue, total_profit, overall_margin, revenue_change,
                  kpis, discount_band_df,
@@ -353,6 +354,8 @@ def render_html(summary_text, current_period, prior_period, generated_at,
     logic rather than reimplementing it with different widgets."""
 
     data_quality_html = render_dq_banner(issues, halts)
+
+    summary_html = "".join(f"<li>{b}</li>" for b in summary_bullets)
 
     # Only the headline numbers up top -- everything else (including a flags
     # count) is either shown as its own section below or cut. Profit/margin
@@ -448,7 +451,9 @@ def render_html(summary_text, current_period, prior_period, generated_at,
   h1 {{ font-size: 1.6rem; margin: 0 0 4px; }}
   .meta {{ color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 24px; }}
   .summary {{ background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
-              padding: 18px 20px; line-height: 1.55; margin-bottom: 28px; }}
+              padding: 18px 20px 18px 38px; line-height: 1.55; margin-bottom: 28px; }}
+  .summary li {{ margin: 4px 0; }}
+  .summary li::marker {{ color: var(--series-1); }}
   #dq-banner {{ margin-bottom: 28px; }}
   .dq-halt, .dq-skip {{ border-radius: 8px; padding: 10px 16px; margin-bottom: 6px; font-size: 0.88rem; }}
   .dq-halt {{ background: var(--dq-halt-bg); border-left: 4px solid var(--dq-halt-border); color: var(--dq-halt-text); }}
@@ -505,7 +510,7 @@ def render_html(summary_text, current_period, prior_period, generated_at,
 
   <div class="stat-grid">{stat_tiles}</div>
 
-  <div class="summary">{summary_text}</div>
+  <ul class="summary">{summary_html}</ul>
 
   <details class="section">
     <summary>Flags{f" ({len(flags)})" if flags else ""}</summary>
@@ -573,14 +578,14 @@ def render_html(summary_text, current_period, prior_period, generated_at,
     return html
 
 
-def write_html(path, summary_text, current_period, prior_period, generated_at,
+def write_html(path, summary_bullets, current_period, prior_period, generated_at,
                 category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                 total_revenue, total_profit, overall_margin, revenue_change,
                 kpis, discount_band_df,
                 issues=(), halts=()):
     """Render the HTML report and save it to `path` (used by the CLI)."""
     html = render_html(
-        summary_text, current_period, prior_period, generated_at,
+        summary_bullets, current_period, prior_period, generated_at,
         category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
         total_revenue, total_profit, overall_margin, revenue_change,
         kpis, discount_band_df,
@@ -609,7 +614,7 @@ def main():
     kpis = analysis.compute_kpis(current_df, prior_df)
     discount_band_df = analysis.discount_band_summary(current_df)
 
-    summary_text = analysis.build_summary_paragraph(
+    summary_bullets = analysis.build_summary_bullets(
         current_df, prior_df, current_period, prior_period, category_df, region_df, flags
     )
 
@@ -621,12 +626,12 @@ def main():
     xlsx_path = os.path.join(REPORTS_DIR, f"sales_report_{stamp}.xlsx")
     html_path = os.path.join(REPORTS_DIR, f"sales_report_{stamp}.html")
 
-    write_excel(xlsx_path, summary_text, current_period, prior_period,
+    write_excel(xlsx_path, summary_bullets, current_period, prior_period,
                 category_df, region_df, discount_product_df, discount_category_df, flags_df,
                 monthly_df, kpis, discount_band_df,
                 issues, halts)
 
-    write_html(html_path, summary_text, current_period, prior_period,
+    write_html(html_path, summary_bullets, current_period, prior_period,
                datetime.now().strftime("%Y-%m-%d %H:%M"),
                category_df, region_df, discount_product_df, discount_category_df, flags, monthly_df,
                total_revenue, total_profit, overall_margin, revenue_change,
